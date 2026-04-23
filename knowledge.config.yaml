@@ -1,0 +1,144 @@
+workspaces:
+  - id: my-workspace
+    name: My Workspace
+    profile_mode: configured
+    projects:
+      - backend
+      - frontend
+    verification:
+      require_flows: true
+      required_golden_flows:
+        - Core User Flow
+      require_runtime_script_contract: true
+      require_artifact_parity: true
+      min_process_coverage: 0.2
+
+projects:
+  backend:
+    enabled: true
+    path: /path/to/backend
+    description: Backend service
+    sources:
+      include:
+        - .agent/**/*.md
+        - "**/*.md"
+        - src/**/*.cs
+        - src/**/*.csproj
+      exclude:
+        - "**/bin/**"
+        - "**/obj/**"
+        - node_modules/**
+    rules:
+      extract:
+        - overview
+        - concepts
+        - entities
+        - flows
+        - endpoints
+        - services
+        - fe_be_mapping
+        - issues
+        - decisions
+      path_hints:
+        controllers:
+          - src/**/Controllers/**/*.cs
+        usecases:
+          - src/**/UseCases/**/*.cs
+        services:
+          - src/**/Services/**/*.cs
+        contracts:
+          - src/**/Contracts/**/*.cs
+      emphasis:
+        - Extract runtime request flow from endpoint entry points into use cases and services
+        - Capture authoritative identifiers and FE-BE contract mappings when present
+        - Prefer architecture and runtime behavior over low-level implementation details
+      classify:
+        project_type: backend
+        stack:
+          - dotnet
+          - csharp
+
+  frontend:
+    enabled: true
+    path: /path/to/frontend
+    description: Frontend application
+    sources:
+      include:
+        - .agent/**/*.md
+        - "**/*.md"
+        - src/**/*.ts
+        - src/**/*.tsx
+      exclude:
+        - "**/node_modules/**"
+        - "**/dist/**"
+        - "**/build/**"
+    rules:
+      extract:
+        - overview
+        - concepts
+        - entities
+        - pages
+        - routes
+        - services
+        - flows
+        - endpoints
+        - fe_be_mapping
+        - issues
+        - decisions
+      path_hints:
+        pages:
+          - src/**/pages/**/*.{ts,tsx}
+          - src/**/app/**/*.{ts,tsx}
+        routes:
+          - src/**/*route*.{ts,tsx}
+          - src/**/router/**/*.{ts,tsx}
+        hooks:
+          - src/**/hooks/**/*.{ts,tsx}
+        services:
+          - src/**/services/**/*.{ts,tsx}
+          - src/**/api/**/*.{ts,tsx}
+      emphasis:
+        - Extract runtime flow from page or route to hook or service to API client
+        - Capture FE-BE mappings such as route params, request payloads, and endpoint usage
+        - Prioritize user-visible behavior, contract edges, and integration risks
+      classify:
+        project_type: frontend
+        stack:
+          - react
+          - typescript
+
+outputs:
+  source_root: ./knowledge/sources
+  state_root: ./knowledge/artifacts/internal/state
+  records_root: ./knowledge/artifacts/internal/records
+  wiki_root: ./knowledge/wiki
+  index_root: ./knowledge/artifacts/internal/index
+  reports_root: ./knowledge/reports
+
+ai:
+  provider: openrouter
+  model_extract: google/gemini-2.5-flash
+  model_build: google/gemini-2.5-flash
+  model_query: google/gemini-2.5-flash
+  api_key_env: OPENROUTER_API_KEY
+  max_chunk_chars: 8000
+  temperature: 0.1
+
+scheduler:
+  enabled: true
+  jobs:
+    - name: sync
+      command: knowledge:sync
+      cron: 0 */4 * * *
+    - name: build
+      command: knowledge:run
+      cron: 15 */4 * * *
+    - name: lint
+      command: quality:lint
+      cron: 0 2 * * *
+    - name: digest
+      command: quality:digest
+      cron: 30 2 * * *
+  reporting:
+    unknown_token: UNKNOWN
+    inferred_token: INFERRED_LOW_CONFIDENCE

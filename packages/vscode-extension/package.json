@@ -1,0 +1,31 @@
+﻿{
+  "name": "code-review-graph-vscode-extension",
+  "displayName": "Code Review Graph",
+  "description": "VS Code integration for local code-review-graph",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:crg.showBlastRadius"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "crg.showBlastRadius",
+        "title": "CRG: Show Blast Radius for Current File"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.0"
+  }
+}

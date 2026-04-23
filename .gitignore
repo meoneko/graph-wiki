@@ -1,0 +1,6 @@
+﻿node_modules/
+dist/
+.code-review-graph/
+coverage/
+.vscode-test/
+knowledge.config.local.yaml
