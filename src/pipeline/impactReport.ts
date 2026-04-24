@@ -1,6 +1,6 @@
-﻿import type { GraphNode } from '../core/types.js';
+﻿import type { GraphNode, QueryMode } from '../core/types.js';
 import type { GraphPathResult } from '../core/graph/types.js';
-import { GraphQueryEngine } from '../core/graph/query/GraphQueryEngine.js';
+import { TrustAwareQueryEngine } from '../core/graph/query/TrustAwareQueryEngine.js';
 import { GraphArtifactLoader } from '../core/graph/query/GraphArtifactLoader.js';
 import { getDB } from '../storage/GraphDB.js';
 import { resolveDbPath } from './config.js';
@@ -12,34 +12,53 @@ export interface ImpactReport {
   affectedEntrypoints: GraphNode[];
   riskScore: number;
   riskRationale: string[];
-  criticalPaths: GraphPathResult[];
+  criticalPaths: any[]; // Changed from GraphPathResult to tolerate QueryResult
   affectedFlows: Array<{ id: string; title: string }>;
   reviewSuggestions: string[];
 }
 
-export async function buildImpactReport(diff: DiffEntry[], workspaceId: string): Promise<ImpactReport> {
+export async function buildImpactReport(
+  diff: DiffEntry[],
+  workspaceId: string,
+  mode: QueryMode = 'mixed_safe'
+): Promise<ImpactReport> {
   const db = getDB(resolveDbPath());
   const loader = new GraphArtifactLoader(db);
-  const engine = new GraphQueryEngine(workspaceId, loader);
+  const engine = new TrustAwareQueryEngine(workspaceId, loader);
 
-  const changedNodes = db.getNodesByWorkspace(workspaceId, 'canonical').filter((n) => diff.some((d) => n.source_file?.endsWith(d.filePath)));
+  const allNodes = db.getNodesByWorkspace(workspaceId, 'canonical');
+  const changedNodes = allNodes.filter((n) => diff.some((d) => n.source_file?.endsWith(d.filePath)));
 
   const affectedNodeMap = new Map<string, GraphNode>();
-  const criticalPaths: GraphPathResult[] = [];
+  const criticalResults: any[] = [];
 
   for (const node of changedNodes) {
-    const impact = await engine.getImpact([node.id], 5);
+    const impact = await engine.analyzeImpact(node.id, mode, 5);
     for (const impacted of impact.nodes) affectedNodeMap.set(impacted.id, impacted);
-    const entrypoints = impact.nodes.filter((n) => n.type.includes('api') || n.type.includes('route') || n.type.includes('controller'));
+
+    // Look for entrypoints in the impact set
+    const entrypoints = impact.nodes.filter((n) =>
+      n.type.includes('api') || n.type.includes('route') || n.type.includes('controller')
+    );
+
     for (const ep of entrypoints) {
-      const path = await engine.getPath(node.id, ep.id);
-      if (path.found) criticalPaths.push(path);
+      const result = await engine.findReasoningPaths(node.id, ep.id, mode);
+      if (result.status === 'OK' || result.status === 'AMBIGUOUS') {
+        criticalResults.push(result);
+      }
     }
   }
 
   const affectedNodes = [...affectedNodeMap.values()];
-  const affectedEntrypoints = affectedNodes.filter((n) => n.type.includes('api') || n.type.includes('route') || n.type.includes('controller'));
-  const riskScore = Math.min(100, changedNodes.length * 10 + affectedEntrypoints.length * 8 + criticalPaths.length * 4);
+  const affectedEntrypoints = affectedNodes.filter((n) =>
+    n.type.includes('api') || n.type.includes('route') || n.type.includes('controller')
+  );
+
+  const riskScore = Math.min(100,
+    changedNodes.length * 10 +
+    affectedEntrypoints.length * 8 +
+    criticalResults.length * 4
+  );
 
   return {
     changedNodes,
@@ -50,9 +69,10 @@ export async function buildImpactReport(diff: DiffEntry[], workspaceId: string):
       `changed_nodes=${changedNodes.length}`,
       `affected_nodes=${affectedNodes.length}`,
       `affected_entrypoints=${affectedEntrypoints.length}`,
-      `critical_paths=${criticalPaths.length}`,
+      `critical_paths=${criticalResults.length}`,
+      `query_mode=${mode}`
     ],
-    criticalPaths,
+    criticalPaths: criticalResults,
     affectedFlows: [],
     reviewSuggestions: riskScore > 70
       ? ['Run full regression tests', 'Request backend + API review', 'Gate merge on manual verification']

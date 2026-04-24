@@ -4,7 +4,9 @@ import { GraphDB } from '../../../storage/GraphDB.js';
 
 export interface LoadedGraphArtifacts {
   canonical: { nodes: GraphNode[]; edges: GraphEdge[] };
+  derived: { nodes: GraphNode[]; edges: GraphEdge[] };
   exploratory: { nodes: GraphNode[]; edges: GraphEdge[] };
+  external: { nodes: GraphNode[]; edges: GraphEdge[] };
   index: {
     nodeById: Record<string, GraphNode>;
     edgeById: Record<string, GraphEdge>;
@@ -26,17 +28,22 @@ export class GraphArtifactLoader {
   private cache = new Map<string, { artifacts: LoadedGraphArtifacts; loadedAt: number }>();
   private CACHE_TTL = 1000 * 60 * 5;
 
-  constructor(private readonly db: GraphDB) {}
+  constructor(private readonly db: GraphDB) { }
 
   async load(workspaceId: string): Promise<LoadedGraphArtifacts> {
     const cached = this.cache.get(workspaceId);
     if (cached && Date.now() - cached.loadedAt < this.CACHE_TTL) return cached.artifacts;
 
     const canonicalNodes = this.db.getNodesByWorkspace(workspaceId, 'canonical');
+    const derivedNodes = this.db.getNodesByWorkspace(workspaceId, 'derived');
     const exploratoryNodes = this.db.getNodesByWorkspace(workspaceId, 'exploratory');
+    const externalNodes = this.db.getNodesByWorkspace(workspaceId, 'external');
+
     const allEdges = this.db.getEdgesByWorkspace(workspaceId);
     const canonicalEdges = allEdges.filter((e) => e.graph_kind === 'canonical');
+    const derivedEdges = allEdges.filter((e) => e.graph_kind === 'derived');
     const exploratoryEdges = allEdges.filter((e) => e.graph_kind === 'exploratory');
+    const externalEdges = allEdges.filter((e) => e.graph_kind === 'external');
 
     const nodeById: Record<string, GraphNode> = {};
     const edgeById: Record<string, GraphEdge> = {};
@@ -46,7 +53,7 @@ export class GraphArtifactLoader {
     const labelLookup: Record<string, string[]> = {};
     const typeLookup: Record<string, string[]> = {};
 
-    [...canonicalNodes, ...exploratoryNodes].forEach((n) => {
+    [...canonicalNodes, ...derivedNodes, ...exploratoryNodes, ...externalNodes].forEach((n) => {
       nodeById[n.id] = n;
       pushMap(labelLookup, n.label.toLowerCase(), n.id);
       pushMap(typeLookup, n.type, n.id);
@@ -62,7 +69,7 @@ export class GraphArtifactLoader {
     const meta: GraphMeta = {
       workspaceId,
       builtAt: new Date().toISOString(),
-      graphVersion: '1.0.0',
+      graphVersion: '1.1.0',
       canonical: { nodeCount: canonicalNodes.length, edgeCount: canonicalEdges.length, confidenceCounts: {} },
       exploratory: { nodeCount: exploratoryNodes.length, edgeCount: exploratoryEdges.length, confidenceCounts: {} },
       traversalReady: allEdges.length > 0,
@@ -71,7 +78,9 @@ export class GraphArtifactLoader {
 
     const artifacts: LoadedGraphArtifacts = {
       canonical: { nodes: canonicalNodes, edges: canonicalEdges },
+      derived: { nodes: derivedNodes, edges: derivedEdges },
       exploratory: { nodes: exploratoryNodes, edges: exploratoryEdges },
+      external: { nodes: externalNodes, edges: externalEdges },
       index: { nodeById, edgeById, adjacency, edgesBySource, edgesByTarget, labelLookup, typeLookup },
       meta,
     };

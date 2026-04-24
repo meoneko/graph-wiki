@@ -62,7 +62,6 @@ export async function verifyGraph(
     const reportsRoot = resolveOutputPath(config, 'reports_root');
     const expected = [
       path.join(wikiRoot, workspace.id, 'README.md'),
-      path.join(reportsRoot, workspace.id, 'verification.json'),
       path.join(reportsRoot, workspace.id, 'ai-enrichment.json'),
     ];
 

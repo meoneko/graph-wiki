@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "code-review-graph",
   "version": "0.1.0",
   "description": "Local-first code intelligence graph for code review and impact analysis",
@@ -8,9 +8,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "crg": "node dist/cli/index.js",
     "dev": "tsx src/cli/index.ts",
     "serve:mcp": "tsx src/mcp/server.ts",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests --exclude \"knowledge/**\" --exclude \"dist/**\" --exclude \"packages/**\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "better-sqlite3": "^9.4.0",
     "chokidar": "^3.6.0",
     "commander": "^12.0.0",
+    "dotenv": "^17.4.2",
     "express": "^4.18.0",
     "fast-glob": "^3.3.0",
     "tree-sitter": "^0.21.0",

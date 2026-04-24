@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { GraphEdge, GraphNode, NormalizedFact } from '../core/types.js';
 
 // ── Embedded migrations (no file-read risk in dist builds) ────────────────────
@@ -122,11 +124,30 @@ CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
 );
 `;
 
+const MIGRATION_0002 = `
+ALTER TABLE nodes ADD COLUMN updated_at TEXT;
+ALTER TABLE edges ADD COLUMN updated_at TEXT;
+`;
+
+const MIGRATION_0003 = `
+ALTER TABLE nodes ADD COLUMN trust_level TEXT;
+ALTER TABLE edges ADD COLUMN trust_level TEXT;
+`;
+
 const MIGRATIONS: Array<{ version: string; sql: string }> = [
   { version: '0001_init', sql: MIGRATION_0001 },
+  { version: '0002_updated_at', sql: MIGRATION_0002 },
+  { version: '0003_trust_level', sql: MIGRATION_0003 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+import {
+  mapNodeFromDB,
+  mapEdgeFromDB,
+  mapNodeToDB,
+  mapEdgeToDB,
+} from './mappers.js';
 
 function jsonParse<T>(value: unknown, fallback: T): T {
   if (typeof value !== 'string') return fallback;
@@ -163,6 +184,9 @@ export class GraphDB {
   private readonly db: Database.Database;
 
   constructor(dbPath: string) {
+    if (dbPath !== ':memory:') {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
@@ -181,8 +205,13 @@ export class GraphDB {
     for (const m of MIGRATIONS) {
       if (!applied.has(m.version)) {
         this.db.transaction(() => {
-          this.db.exec(m.sql);
-          this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)').run(m.version);
+          try {
+            this.db.exec(m.sql);
+            this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)').run(m.version);
+          } catch (e) {
+            console.error(`Migration ${m.version} failed:`, e);
+            throw e;
+          }
         })();
       }
     }
@@ -191,39 +220,60 @@ export class GraphDB {
   // ── Nodes ─────────────────────────────────────────────────────────────────
 
   upsertNode(node: GraphNode): void {
+    const row = mapNodeToDB(node);
     this.db.prepare(`
-      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, source_file, symbol, http_method, http_path, domain, lang_meta, provenance)
-      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @provenance)
+      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, provenance, updated_at)
+      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @provenance, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, project=excluded.project, label=excluded.label, type=excluded.type,
-        graph_kind=excluded.graph_kind, confidence=excluded.confidence, source_file=excluded.source_file,
+        graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level, source_file=excluded.source_file,
         symbol=excluded.symbol, http_method=excluded.http_method, http_path=excluded.http_path,
-        domain=excluded.domain, lang_meta=excluded.lang_meta, provenance=excluded.provenance
-    `).run({ ...node, lang_meta: JSON.stringify(node.lang_meta ?? {}), provenance: JSON.stringify(node.provenance ?? {}) });
+        domain=excluded.domain, lang_meta=excluded.lang_meta, provenance=excluded.provenance, updated_at=excluded.updated_at
+    `).run({ ...row, updated_at: node.updated_at || new Date().toISOString() });
+
+    this.db.prepare(`
+      DELETE FROM nodes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?)
+    `).run(node.id);
 
     this.db.prepare(`
       INSERT INTO nodes_fts(rowid, id, label, symbol, http_path, domain)
       VALUES ((SELECT rowid FROM nodes WHERE id = ?), ?, ?, ?, ?, ?)
-      ON CONFLICT(rowid) DO UPDATE SET
-        id=excluded.id, label=excluded.label, symbol=excluded.symbol,
-        http_path=excluded.http_path, domain=excluded.domain
     `).run(node.id, node.id, node.label, node.symbol ?? '', node.http_path ?? '', node.domain ?? '');
   }
 
   getNode(id: string): GraphNode | undefined {
     const row = this.db.prepare('SELECT * FROM nodes WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-    return row ? this.mapNode(row) : undefined;
+    return row ? mapNodeFromDB(row) : undefined;
   }
 
   getNodesByWorkspace(workspace: string, graphKind = 'canonical'): GraphNode[] {
-    return (this.db.prepare('SELECT * FROM nodes WHERE workspace = ? AND graph_kind = ?').all(workspace, graphKind) as Record<string, unknown>[]).map((r) => this.mapNode(r));
+    return (this.db.prepare('SELECT * FROM nodes WHERE workspace = ? AND graph_kind = ?').all(workspace, graphKind) as Record<string, unknown>[]).map((r) => mapNodeFromDB(r));
+  }
+
+  getAllNodesByWorkspace(workspace: string): GraphNode[] {
+    return (this.db.prepare('SELECT * FROM nodes WHERE workspace = ?').all(workspace) as Record<string, unknown>[]).map((r) => mapNodeFromDB(r));
+  }
+
+  cleanWorkspace(workspaceId: string): void {
+    this.db.prepare('DELETE FROM rejects WHERE workspace = ?').run(workspaceId);
+    this.db.prepare('DELETE FROM edges WHERE workspace = ?').run(workspaceId);
+    this.db.prepare('DELETE FROM nodes_fts WHERE rowid IN (SELECT rowid FROM nodes WHERE workspace = ?)').run(workspaceId);
+    this.db.prepare('DELETE FROM nodes WHERE workspace = ?').run(workspaceId);
+    this.db.prepare('DELETE FROM facts_fts WHERE rowid IN (SELECT rowid FROM facts WHERE workspace = ?)').run(workspaceId);
+    this.db.prepare('DELETE FROM facts WHERE workspace = ?').run(workspaceId);
+
+    // file_hashes doesn't have workspace, but project belongs to workspace. Wait.
+    // the project id in file_hashes is just project id.
+    // If we want to clear everything, let's leave file_hashes alone or drop them if needed. (Dropping means full resync).
+    // Let's assume sync sources handles file_hashes correctly, so we don't necessarily need to drop it here, 
+    // but the node/edge drop forces extraction regardless.
   }
 
   getNodesBySymbol(symbol: string, workspace?: string): GraphNode[] {
     const rows = workspace
       ? this.db.prepare('SELECT * FROM nodes WHERE symbol = ? AND workspace = ?').all(symbol, workspace)
       : this.db.prepare('SELECT * FROM nodes WHERE symbol = ?').all(symbol);
-    return (rows as Record<string, unknown>[]).map((r) => this.mapNode(r));
+    return (rows as Record<string, unknown>[]).map((r) => mapNodeFromDB(r));
   }
 
   deleteNodesByWorkspace(workspace: string): void {
@@ -233,26 +283,27 @@ export class GraphDB {
   // ── Edges ─────────────────────────────────────────────────────────────────
 
   upsertEdge(edge: GraphEdge): void {
+    const row = mapEdgeToDB(edge);
     this.db.prepare(`
-      INSERT INTO edges(id, workspace, from_id, to_id, type, graph_kind, confidence, metadata, provenance)
-      VALUES (@id, @workspace, @from_id, @to_id, @type, @graph_kind, @confidence, @metadata, @provenance)
+      INSERT INTO edges(id, workspace, from_id, to_id, type, graph_kind, confidence, trust_level, metadata, provenance, updated_at)
+      VALUES (@id, @workspace, @from_id, @to_id, @type, @graph_kind, @confidence, @trust_level, @metadata, @provenance, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, from_id=excluded.from_id, to_id=excluded.to_id,
-        type=excluded.type, graph_kind=excluded.graph_kind, confidence=excluded.confidence,
-        metadata=excluded.metadata, provenance=excluded.provenance
-    `).run({ ...edge, metadata: JSON.stringify(edge.metadata ?? {}), provenance: JSON.stringify(edge.provenance ?? {}) });
+        type=excluded.type, graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level,
+        metadata=excluded.metadata, provenance=excluded.provenance, updated_at=excluded.updated_at
+    `).run({ ...row, updated_at: edge.updated_at || new Date().toISOString() });
   }
 
   getEdgesFrom(nodeId: string): GraphEdge[] {
-    return (this.db.prepare('SELECT * FROM edges WHERE from_id = ?').all(nodeId) as Record<string, unknown>[]).map((r) => this.mapEdge(r));
+    return (this.db.prepare('SELECT * FROM edges WHERE from_id = ?').all(nodeId) as Record<string, unknown>[]).map((r) => mapEdgeFromDB(r));
   }
 
   getEdgesTo(nodeId: string): GraphEdge[] {
-    return (this.db.prepare('SELECT * FROM edges WHERE to_id = ?').all(nodeId) as Record<string, unknown>[]).map((r) => this.mapEdge(r));
+    return (this.db.prepare('SELECT * FROM edges WHERE to_id = ?').all(nodeId) as Record<string, unknown>[]).map((r) => mapEdgeFromDB(r));
   }
 
   getEdgesByWorkspace(workspace: string): GraphEdge[] {
-    return (this.db.prepare('SELECT * FROM edges WHERE workspace = ?').all(workspace) as Record<string, unknown>[]).map((r) => this.mapEdge(r));
+    return (this.db.prepare('SELECT * FROM edges WHERE workspace = ?').all(workspace) as Record<string, unknown>[]).map((r) => mapEdgeFromDB(r));
   }
 
   deleteEdgesByWorkspace(workspace: string): void {
@@ -285,9 +336,12 @@ export class GraphDB {
     });
 
     this.db.prepare(`
+      DELETE FROM facts_fts WHERE rowid = (SELECT rowid FROM facts WHERE id = ?)
+    `).run(id);
+
+    this.db.prepare(`
       INSERT INTO facts_fts(rowid, id, symbol, source_file)
       VALUES ((SELECT rowid FROM facts WHERE id = ?), ?, ?, ?)
-      ON CONFLICT(rowid) DO UPDATE SET id=excluded.id, symbol=excluded.symbol, source_file=excluded.source_file
     `).run(id, id, fact.symbol, fact.source_file);
   }
 
@@ -318,8 +372,8 @@ export class GraphDB {
   searchNodesFTS(query: string, workspace?: string, limit = 20): GraphNode[] {
     const rows = workspace
       ? this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.rowid = f.rowid WHERE nodes_fts MATCH ? AND n.workspace = ? LIMIT ?').all(query, workspace, limit)
-      : this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.rowid = f.rowid WHERE nodes_fts MATCH ? LIMIT ?').all(query, limit);
-    return (rows as Record<string, unknown>[]).map((r) => this.mapNode(r));
+      : this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.id = f.id WHERE nodes_fts MATCH ? LIMIT ?').all(query, limit);
+    return (rows as Record<string, unknown>[]).map((r) => mapNodeFromDB(r));
   }
 
   searchFactsFTS(query: string, workspace?: string, limit = 20): NormalizedFact[] {
@@ -354,43 +408,10 @@ export class GraphDB {
     return this.db.transaction(() => fn(this))();
   }
 
+
+
   close(): void {
     this.db.close();
-  }
-
-  // ── Private mappers ────────────────────────────────────────────────────────
-
-  private mapNode(row: Record<string, unknown>): GraphNode {
-    return {
-      id: String(row['id']),
-      workspace: String(row['workspace']),
-      project: String(row['project']),
-      label: String(row['label']),
-      type: String(row['type']),
-      graph_kind: (row['graph_kind'] as GraphNode['graph_kind']) ?? 'canonical',
-      confidence: (row['confidence'] as GraphNode['confidence']) ?? 'EXTRACTED',
-      source_file: row['source_file'] ? String(row['source_file']) : undefined,
-      symbol: row['symbol'] ? String(row['symbol']) : undefined,
-      http_method: row['http_method'] ? String(row['http_method']) : undefined,
-      http_path: row['http_path'] ? String(row['http_path']) : undefined,
-      domain: row['domain'] ? String(row['domain']) : undefined,
-      lang_meta: jsonParse<Record<string, unknown>>(row['lang_meta'], {}),
-      provenance: jsonParse<Record<string, unknown>>(row['provenance'], {}),
-    };
-  }
-
-  private mapEdge(row: Record<string, unknown>): GraphEdge {
-    return {
-      id: String(row['id']),
-      workspace: String(row['workspace']),
-      from_id: String(row['from_id']),
-      to_id: String(row['to_id']),
-      type: String(row['type']),
-      graph_kind: (row['graph_kind'] as GraphEdge['graph_kind']) ?? 'canonical',
-      confidence: (row['confidence'] as GraphEdge['confidence']) ?? 'EXTRACTED',
-      metadata: jsonParse<Record<string, unknown>>(row['metadata'], {}),
-      provenance: jsonParse<Record<string, unknown>>(row['provenance'], {}),
-    };
   }
 }
 

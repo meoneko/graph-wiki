@@ -1,4 +1,7 @@
-﻿import { runPipeline } from '../pipeline/run.js';
+﻿import { config as dotenvConfig } from 'dotenv';
+dotenvConfig();
+
+import { runPipeline } from '../pipeline/run.js';
 import { startWatch } from '../pipeline/watch.js';
 import { getDiff } from '../pipeline/gitDiff.js';
 import { buildImpactReport } from '../pipeline/impactReport.js';
@@ -69,11 +72,28 @@ async function main(): Promise<void> {
 
   if (command === 'ask') {
     const question = rest.find((r) => !r.startsWith('--'));
+    const isExact = hasFlag(rest, '--exact');
     if (!question) throw new Error('ask requires <question>');
     const ws = await resolveWorkspace(parseFlag(rest, '--workspace'));
-    const engine = new GraphQueryEngine(ws, new GraphArtifactLoader(getDB(resolveDbPath())));
-    const node = await engine.getNode(question).catch(() => undefined);
-    console.log(node ? JSON.stringify(node, null, 2) : 'UNKNOWN');
+    const db = getDB(resolveDbPath());
+
+    let nodes = db.getNodesBySymbol(question, ws);
+
+    if (nodes.length === 0 && !isExact) {
+      try {
+        nodes = db.searchNodesFTS(question, ws);
+      } catch (e) { }
+    }
+
+    if (nodes.length === 0) {
+      console.log('INSUFFICIENT_EVIDENCE');
+    } else if (nodes.length === 1) {
+      console.log('OK');
+      console.log(JSON.stringify(nodes[0], null, 2));
+    } else {
+      console.log('AMBIGUOUS');
+      console.log(JSON.stringify(nodes.map(n => ({ id: n.id, symbol: n.symbol })), null, 2));
+    }
     return;
   }
 

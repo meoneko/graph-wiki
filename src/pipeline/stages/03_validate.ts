@@ -1,6 +1,7 @@
 ﻿import type { CandidateRecord, NormalizedFact, RejectedRecord } from '../../core/types.js';
 import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
 import { GraphDB } from '../../storage/GraphDB.js';
+import { TrustClassifier } from '../TrustClassifier.js';
 
 export async function validateFacts(candidates: CandidateRecord[], workspaceId: string, db: GraphDB): Promise<{ facts: NormalizedFact[]; rejects: RejectedRecord[] }> {
   const facts: NormalizedFact[] = [];
@@ -21,7 +22,15 @@ export async function validateFacts(candidates: CandidateRecord[], workspaceId: 
       continue;
     }
 
-    const fact: NormalizedFact = { ...c, fact_id: c.candidate_id, status: 'validated' };
+    const classification = TrustClassifier.classify(c.extractor);
+    const fact: NormalizedFact = {
+      ...c,
+      fact_id: c.candidate_id,
+      status: 'validated',
+      trust_level: classification.trust_level,
+      decision_status: classification.decision_status,
+    };
+
     db.upsertFact(fact);
     facts.push(fact);
   }

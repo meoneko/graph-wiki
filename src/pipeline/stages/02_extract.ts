@@ -12,19 +12,47 @@ function sha1(input: string): string {
   return createHash('sha1').update(input).digest('hex');
 }
 
-async function getChangedFiles(project: ProjectConfig, db: GraphDB): Promise<string[]> {
+export interface ExtractOptions {
+  incremental?: boolean;
+  changedFiles?: string[];
+}
+
+async function listProjectFiles(project: ProjectConfig): Promise<string[]> {
   const patterns = project.sources?.include ?? ['**/*.cs'];
-  const files = await fg(patterns, {
+  return fg(patterns, {
     cwd: project.path,
     absolute: true,
     ignore: project.sources?.exclude ?? ['**/node_modules/**', '**/.git/**', '**/bin/**', '**/obj/**'],
   });
+}
+
+async function getFilesToExtract(project: ProjectConfig, db: GraphDB, options: ExtractOptions): Promise<string[]> {
+  const files = await listProjectFiles(project);
+
+  if (!options.incremental) {
+    const normalizedFiles: string[] = [];
+    for (const file of files) {
+      const content = await readFile(file, 'utf-8');
+      const normalized = canonicalizePath(file);
+      db.upsertFileHash(project.id, normalized, sha1(content));
+      normalizedFiles.push(normalized);
+    }
+    return normalizedFiles;
+  }
+
+  const explicitChanges = options.changedFiles
+    ? new Set(options.changedFiles.map((file) => canonicalizePath(file)))
+    : undefined;
 
   const changed: string[] = [];
   for (const file of files) {
+    const normalized = canonicalizePath(file);
+    if (explicitChanges && !explicitChanges.has(normalized)) {
+      continue;
+    }
+
     const content = await readFile(file, 'utf-8');
     const hash = sha1(content);
-    const normalized = canonicalizePath(file);
     if (db.getFileHash(project.id, normalized) !== hash) {
       changed.push(normalized);
       db.upsertFileHash(project.id, normalized, hash);
@@ -33,13 +61,13 @@ async function getChangedFiles(project: ProjectConfig, db: GraphDB): Promise<str
   return changed;
 }
 
-export async function extractCandidates(workspace: WorkspaceConfig, config: KnowledgeConfig, db: GraphDB): Promise<{ candidates: CandidateRecord[]; rejects: RejectedRecord[] }> {
+export async function extractCandidates(workspace: WorkspaceConfig, config: KnowledgeConfig, db: GraphDB, options: ExtractOptions = {}): Promise<{ candidates: CandidateRecord[]; rejects: RejectedRecord[] }> {
   const projects = getWorkspaceProjects(config, workspace.id);
   const allCandidates: CandidateRecord[] = [];
   const rejects: RejectedRecord[] = [];
 
   for (const project of projects) {
-    const changedFiles = await getChangedFiles(project, db);
+    const changedFiles = await getFilesToExtract(project, db, options);
     if (changedFiles.length === 0) continue;
 
     const adapter = globalAdapterRegistry.resolve({ workspaceId: workspace.id, projectId: project.id, projectRoot: project.path }, changedFiles);
