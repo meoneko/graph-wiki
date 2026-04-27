@@ -2,37 +2,27 @@
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
+import type { QueryMode } from '../../core/types.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
+
+const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
 export function registerSearchTools(): void {
   registerTool({
-    name: 'search_fts',
-    description: 'Search nodes with FTS',
-    inputSchema: { query: 'string', workspaceId: 'string' },
+    name: 'search',
+    description: 'Search visible graph nodes with trust-aware filtering',
+    inputSchema: { query: 'string', workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ query: z.string(), workspaceId: z.string() }).parse(args);
-      return getDB(resolveDbPath()).searchNodesFTS(input.query, input.workspaceId, 25);
+      const input = z.object({
+        query: z.string(),
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.search.search' });
+      return engine.searchNodes(input.query, operation, input.mode as QueryMode, 50);
     },
   });
 
-  registerTool({
-    name: 'search_semantic',
-    description: 'Search by vector similarity',
-    inputSchema: { vector: 'number[]', workspaceId: 'string', topK: 'number?' },
-    handler: async (args) => {
-      const input = z.object({ vector: z.array(z.number()), workspaceId: z.string(), topK: z.number().int().positive().optional() }).parse(args);
-      return getDB(resolveDbPath()).findSimilarByVector(new Float32Array(input.vector), input.workspaceId, input.topK ?? 10);
-    },
-  });
-
-  registerTool({
-    name: 'search_nodes',
-    description: 'Hybrid search nodes',
-    inputSchema: { query: 'string', workspaceId: 'string' },
-    handler: async (args) => {
-      const input = z.object({ query: z.string(), workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const fts = db.searchNodesFTS(input.query, input.workspaceId, 50);
-      return fts;
-    },
-  });
 }

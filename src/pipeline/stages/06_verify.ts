@@ -4,6 +4,9 @@ import type { GraphNode, GraphEdge } from '../../core/types.js';
 import type { KnowledgeConfig, WorkspaceConfig } from '../config.js';
 import { resolveOutputPath } from '../config.js';
 import { GraphDB } from '../../storage/GraphDB.js';
+import { getGraphArtifactDir, verifyGraphArtifactParity } from '../artifacts/graphArtifacts.js';
+import { GraphValidator, type ValidationIssue } from '../../core/graph/validation/GraphValidator.js';
+import { GovernanceValidator, type GovernanceIssue } from '../../core/graph/validation/GovernanceValidator.js';
 
 export interface VerifyReport {
   workspaceId: string;
@@ -12,6 +15,8 @@ export interface VerifyReport {
   edgeCount: number;
   processCoverage: number;
   issues: string[];
+  validationIssues?: ValidationIssue[];
+  governanceIssues?: GovernanceIssue[];
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -42,10 +47,15 @@ export async function verifyGraph(
   }
 
   for (const flowName of verification.required_golden_flows ?? []) {
-    const found = nodes.some((n) => n.label.toLowerCase().includes(flowName.toLowerCase()));
+    const expected = flowName.toLowerCase();
+    const found = nodes.some((n) =>
+      n.id.toLowerCase() === expected ||
+      n.label.toLowerCase() === expected ||
+      n.symbol?.toLowerCase() === expected ||
+      n.http_path?.toLowerCase() === expected
+    );
     if (!found) issues.push(`MISSING_GOLDEN_FLOW:${flowName}`);
   }
-
   const touched = new Set<string>();
   for (const edge of edges) {
     touched.add(edge.from_id);
@@ -58,19 +68,82 @@ export async function verifyGraph(
   }
 
   if (verification.require_artifact_parity) {
-    const wikiRoot = resolveOutputPath(config, 'wiki_root');
-    const reportsRoot = resolveOutputPath(config, 'reports_root');
+    const artifactDir = getGraphArtifactDir(workspace.id);
     const expected = [
-      path.join(wikiRoot, workspace.id, 'README.md'),
-      path.join(reportsRoot, workspace.id, 'verification.json'),
-      path.join(reportsRoot, workspace.id, 'ai-enrichment.json'),
+      path.join(artifactDir, 'canonical.graph.json'),
+      path.join(artifactDir, 'exploratory.graph.json'),
+      path.join(artifactDir, 'graph.meta.json'),
+      path.join(artifactDir, 'edges.jsonl'),
     ];
 
     for (const file of expected) {
       if (!(await exists(file))) {
-        issues.push(`ARTIFACT_PARITY_MISSING:${file}`);
+        issues.push(`ARTIFACT_MISSING`);
       }
     }
+
+    if (!issues.includes('ARTIFACT_MISSING')) {
+      const fs = await import('node:fs/promises');
+      try {
+        const canonicalRaw = await fs.readFile(path.join(artifactDir, 'canonical.graph.json'), 'utf8');
+        const exploratoryRaw = await fs.readFile(path.join(artifactDir, 'exploratory.graph.json'), 'utf8');
+        const metaRaw = await fs.readFile(path.join(artifactDir, 'graph.meta.json'), 'utf8');
+        const edgesRaw = await fs.readFile(path.join(artifactDir, 'edges.jsonl'), 'utf8');
+
+        let canonical, exploratory, meta;
+        try {
+          canonical = JSON.parse(canonicalRaw);
+          exploratory = JSON.parse(exploratoryRaw);
+          meta = JSON.parse(metaRaw);
+        } catch {
+          issues.push('ARTIFACT_SCHEMA_INVALID');
+        }
+
+        if (canonical && exploratory && meta) {
+          if (!canonical.nodes || !canonical.edges || !exploratory.nodes || !exploratory.edges) {
+            issues.push('ARTIFACT_SCHEMA_INVALID');
+          } else {
+            const canonicalPure = canonical.nodes.every((n: any) => n.graph_kind === 'canonical') &&
+              canonical.edges.every((e: any) => e.graph_kind === 'canonical');
+            if (!canonicalPure) issues.push('ARTIFACT_PURITY_VIOLATION');
+
+            const exploratoryPure = exploratory.nodes.every((n: any) => n.graph_kind === 'exploratory') &&
+              exploratory.edges.every((e: any) => e.graph_kind === 'exploratory');
+            if (!exploratoryPure) issues.push('ARTIFACT_PURITY_VIOLATION');
+
+            const edgeLines = edgesRaw.trim().split('\n').filter(Boolean).length;
+            if (edgeLines !== _db.getEdgesByWorkspace(workspace.id).length) {
+              issues.push('ARTIFACT_WRITE_INCOMPLETE');
+            }
+
+            const parityResult = await verifyGraphArtifactParity(_db, workspace.id);
+            if (parityResult.status !== 'OK') {
+              issues.push('ARTIFACT_PARITY_MISMATCH');
+            }
+          }
+        }
+      } catch (e) {
+        issues.push('ARTIFACT_WRITE_INCOMPLETE');
+      }
+    }
+  }
+
+  // Graph structural validation
+  const graphValidation = GraphValidator.validate(nodes, edges, {
+    externalWorkflowEnabled: workspace.external_workflow_enabled ?? false,
+  });
+  for (const vi of graphValidation.issues) {
+    if (vi.severity === 'error') {
+      const target = vi.nodeId ?? vi.edgeId ?? 'unknown';
+      issues.push(`${vi.code}:${target}`);
+    }
+  }
+
+  // Governance / authority chain validation
+  const govValidation = GovernanceValidator.validate(nodes, edges);
+  for (const gi of govValidation.issues) {
+    const target = gi.nodeId ?? gi.edgeId ?? 'unknown';
+    issues.push(`${gi.code}:${target}`);
   }
 
   return {
@@ -80,5 +153,7 @@ export async function verifyGraph(
     edgeCount: edges.length,
     processCoverage: Number(processCoverage.toFixed(4)),
     issues,
+    validationIssues: graphValidation.issues,
+    governanceIssues: govValidation.issues,
   };
 }

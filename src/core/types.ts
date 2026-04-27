@@ -1,15 +1,68 @@
 ﻿export type NodeType = string;
 
+export type GraphKind = 'canonical' | 'derived' | 'exploratory' | 'external';
+
+export type ConfidenceBand = 'AUTHORITATIVE' | 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
+
+export type DecisionStatus =
+  | 'OK'
+  | 'AMBIGUOUS'
+  | 'INSUFFICIENT_EVIDENCE'
+  | 'EXPLORATORY_ONLY'
+  | 'PARTIAL'
+  | 'POLICY_VIOLATION';
+
+export type OperationType =
+  | 'ask'
+  | 'impact'
+  | 'lineage'
+  | 'wiki'
+  | 'governance';
+
+export type QueryMode = 'authoritative' | 'mixed_safe' | 'exploratory';
+
+export type TrustLevel = 'AUTHORITATIVE' | 'DERIVED' | 'EXPLORATORY' | 'MIXED';
+
+export type ResponseConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface Provenance {
+  source: 'parser' | 'analysis' | 'ai' | 'user';
+  artifact_source: string;
+  producer_stage: string;
+  timestamp: string;
+  file?: string;
+  line_start?: number;
+  line_end?: number;
+  rule?: string;
+}
+
 export const EdgeType = {
+  // Structural / control flow
   calls: 'calls',
   imports: 'imports',
   inherits: 'inherits',
   implements: 'implements',
-  uses_authority: 'uses_authority',
+  invokes: 'invokes',
+  dispatches_to: 'dispatches_to',
+  triggers: 'triggers',
   precedes: 'precedes',
   delegates_to: 'delegates_to',
-  canonical_dependency: 'canonical_dependency',
+  contains: 'contains',
+  entry_of: 'entry_of',
+  belongs_to_flow: 'belongs_to_flow',
+  // Data / contract
+  requests: 'requests',
+  returns: 'returns',
+  maps_to: 'maps_to',
+  binds_to: 'binds_to',
+  // Authority
+  uses_authority: 'uses_authority',
   node_uses_authority: 'node_uses_authority',
+  depends_on_authority: 'depends_on_authority',
+  // Layer-specific build artifacts
+  canonical_dependency: 'canonical_dependency',
+  derived_dependency: 'derived_dependency',
+  exploratory_dependency: 'exploratory_dependency',
 } as const;
 
 export type EdgeType = (typeof EdgeType)[keyof typeof EdgeType];
@@ -54,6 +107,8 @@ export interface CandidateRecord {
 
 export interface NormalizedFact extends CandidateRecord {
   fact_id: string;
+  trust_level?: TrustLevel;
+  decision_status?: DecisionStatus;
 }
 
 export interface RejectedRecord {
@@ -71,17 +126,25 @@ export interface GraphNode {
   id: string;
   workspace: string;
   project: string;
-  label: string;
   type: NodeType;
-  graph_kind: 'canonical' | 'exploratory';
-  confidence: 'AUTHORITATIVE' | 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
+  label: string;
   source_file?: string;
   symbol?: string;
+  graph_kind: GraphKind;
+  confidence_band: ConfidenceBand;
+  /** @deprecated use confidence_band */
+  confidence?: string;
+  confidence_score?: number;
+  provenance: Provenance;
+  metadata?: Record<string, unknown>;
+  trust_level?: TrustLevel;
+  created_at?: string;
+  updated_at?: string;
+  // Legacy fields for backward compat
   http_method?: string;
   http_path?: string;
   domain?: string;
   lang_meta?: Record<string, unknown>;
-  provenance: Record<string, unknown>;
 }
 
 export interface GraphEdge {
@@ -90,10 +153,71 @@ export interface GraphEdge {
   from_id: string;
   to_id: string;
   type: string;
-  graph_kind: 'canonical' | 'exploratory';
-  confidence: 'AUTHORITATIVE' | 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
-  metadata?: Record<string, unknown>;
-  provenance: Record<string, unknown>;
+  graph_kind: GraphKind;
+  confidence_band: ConfidenceBand;
+  /** @deprecated use confidence_band */
+  confidence?: string;
+  confidence_score?: number;
+  provenance: Provenance;
+  created_at?: string;
+  metadata?: {
+    line?: number;
+    column?: number;
+    derivation_rule?: string;
+    flow_type?: 'control' | 'data' | 'contract' | 'authority' | 'structural';
+    fromSymbol?: string;
+    toSymbol?: string;
+    [key: string]: unknown;
+  };
+  trust_level?: TrustLevel;
+  updated_at?: string;
+}
+
+export interface ReasoningPath {
+  path_id: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  trust_level: TrustLevel;
+  status: DecisionStatus;
+  summary: string;
+}
+
+export interface QueryResult {
+  status: DecisionStatus;
+  reasoning: {
+    selected_paths: ReasoningPath[];
+    rejected_paths?: ReasoningPath[];
+    selection_explanation: string[];
+  };
+  data: {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    [key: string]: unknown;
+  };
+  confidence: {
+    level: ResponseConfidence;
+    reasons: string[];
+  };
+  provenance: {
+    sources: Provenance[];
+  };
+  warnings: string[];
+  codes: string[];
+  metadata?: {
+    policy?: {
+      operation: OperationType | null;
+      mode: QueryMode | null;
+      traversedEdgeCount: number;
+      blockedEdgeCount: number;
+      blockedCodes: string[];
+    };
+    tool?: {
+      name: string;
+      workspace?: string;
+      project?: string;
+    };
+    [key: string]: unknown;
+  };
 }
 
 export interface IProjectAdapter {

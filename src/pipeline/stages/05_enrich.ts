@@ -1,4 +1,4 @@
-﻿import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { KnowledgeConfig } from '../config.js';
 import { resolveOutputPath } from '../config.js';
@@ -13,9 +13,9 @@ export interface EnrichmentResult {
 }
 
 export async function enrichFacts(
-  facts: NormalizedFact[],
-  nodes: GraphNode[],
-  edges: GraphEdge[],
+  _facts: NormalizedFact[],
+  _nodes: GraphNode[],
+  _edges: GraphEdge[],
   workspaceId: string,
   _db: GraphDB,
   config: KnowledgeConfig,
@@ -25,58 +25,12 @@ export async function enrichFacts(
   const wsRoot = path.join(reportsRoot, workspaceId);
   await mkdir(wsRoot, { recursive: true });
 
-  if (!ai?.provider || !ai.api_key_env) {
-    const result: EnrichmentResult = { provider: 'none', model: 'none', status: 'skipped', reason: 'AI_CONFIG_MISSING' };
-    await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify(result, null, 2), 'utf-8');
-    return result;
-  }
-
-  const apiKey = process.env[ai.api_key_env];
-  if (!apiKey) {
-    const result: EnrichmentResult = { provider: ai.provider, model: ai.model_extract ?? 'unknown', status: 'skipped', reason: 'API_KEY_NOT_SET' };
-    await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify(result, null, 2), 'utf-8');
-    return result;
-  }
-
-  const payload = {
-    workspaceId,
-    factCount: facts.length,
-    nodeCount: nodes.length,
-    edgeCount: edges.length,
-    sampleFacts: facts.slice(0, 20),
+  const result: EnrichmentResult = {
+    provider: ai?.provider ?? 'none',
+    model: ai?.model_extract ?? 'none',
+    status: 'skipped',
+    reason: 'EXTERNAL_AI_ENRICHMENT_DISABLED_BY_DEFAULT',
   };
-
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: ai.model_extract ?? 'google/gemini-2.5-flash',
-        temperature: ai.temperature ?? 0.1,
-        messages: [
-          { role: 'system', content: 'Summarize architecture signals and integration risks from extracted code graph data.' },
-          { role: 'user', content: JSON.stringify(payload) },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      const result: EnrichmentResult = { provider: ai.provider, model: ai.model_extract ?? 'unknown', status: 'failed', reason: `HTTP_${response.status}:${text.slice(0, 300)}` };
-      await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify(result, null, 2), 'utf-8');
-      return result;
-    }
-
-    const data = await response.json();
-    const result: EnrichmentResult = { provider: ai.provider, model: ai.model_extract ?? 'unknown', status: 'completed' };
-    await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify({ result, response: data }, null, 2), 'utf-8');
-    return result;
-  } catch (error) {
-    const result: EnrichmentResult = { provider: ai.provider, model: ai.model_extract ?? 'unknown', status: 'failed', reason: error instanceof Error ? error.message : String(error) };
-    await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify(result, null, 2), 'utf-8');
-    return result;
-  }
+  await writeFile(path.join(wsRoot, 'ai-enrichment.json'), JSON.stringify(result, null, 2), 'utf-8');
+  return result;
 }

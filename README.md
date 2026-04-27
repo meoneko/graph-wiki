@@ -28,19 +28,19 @@ cp knowledge.config.yaml.example knowledge.config.yaml  # edit paths to your rep
 npm run build
 
 # Build the graph for a workspace
-npx crg build my-workspace
+npm run crg -- build my-workspace
 
 # Ask about a node
-npx crg ask "CreateOrderUseCase" --workspace my-workspace
+npm run crg -- ask "CreateOrderUseCase" --workspace my-workspace
 
 # Impact analysis on last commit
-npx crg impact --diff HEAD~1..HEAD --workspace my-workspace
+npm run crg -- impact --diff HEAD~1..HEAD --workspace my-workspace
 
 # Watch mode (rebuilds on file change)
-npx crg watch my-workspace
+npm run crg -- watch my-workspace
 
 # Serve as MCP server (for Claude Desktop)
-npx crg serve-mcp
+npm run crg -- serve-mcp
 ```
 
 ---
@@ -150,7 +150,7 @@ knowledge.config.yaml
 | 01 sync | `01_sync.ts` | Copy source files to `knowledge/sources/` |
 | 02 extract | `02_extract.ts` | Hash-based incremental extraction via adapters |
 | 03 validate | `03_validate.ts` | NodeType registry gate — unknown types → rejects table |
-| 04 build graph | `04_buildGraph.ts` | Assemble nodes + dependency edges into SQLite |
+| 04 build graph | `04a_build_canonical.ts`, `04b_build_derived.ts`, `04c_build_exploratory.ts` | Assemble multi-layer nodes + dependency edges into SQLite |
 | 05 enrich | `05_enrich.ts` | Optional AI enrichment pass (OpenRouter) |
 | 06 verify | `06_verify.ts` | Workspace verification rules (flows, coverage, parity) |
 | 07 wiki | `07_wiki.ts` | Generate markdown wiki to `knowledge/wiki/` |

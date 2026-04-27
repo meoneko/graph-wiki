@@ -3,77 +3,92 @@ import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { detectCommunities, generateArchitectureOverview } from '../../core/graph/analysis/community.js';
 import { registerTool } from './runtime.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
+import type { QueryMode } from '../../core/types.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
+import { QueryResultFactory } from '../../core/graph/query/QueryResultFactory.js';
+
+const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
 export function registerGraphTools(): void {
   registerTool({
-    name: 'get_graph_stats',
-    description: 'Graph statistics',
-    inputSchema: { workspaceId: 'string' },
+    name: 'graph_stats',
+    description: 'Graph statistics filtered by trust mode',
+    inputSchema: { workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = db.getNodesByWorkspace(input.workspaceId, 'canonical');
-      const edges = db.getEdgesByWorkspace(input.workspaceId);
-      return {
-        nodes: nodes.length,
-        edges: edges.length,
-        density: nodes.length <= 1 ? 0 : edges.length / (nodes.length * (nodes.length - 1)),
-        orphans: nodes.filter((n) => !edges.some((e) => e.from_id === n.id || e.to_id === n.id)).length,
-      };
+      const input = z.object({
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.graph.graph_stats' });
+      return engine.getGraphStats(operation, input.mode as QueryMode);
     },
   });
 
   registerTool({
-    name: 'get_architecture',
-    description: 'Architecture overview markdown',
-    inputSchema: { workspaceId: 'string' },
+    name: 'architecture_overview',
+    description: 'Architecture overview markdown with trust filtering',
+    inputSchema: { workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const communities = detectCommunities(db.getNodesByWorkspace(input.workspaceId, 'canonical'), db.getEdgesByWorkspace(input.workspaceId));
-      return { markdown: generateArchitectureOverview(communities) };
+      const input = z.object({
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const service = getTrustedQueryService(getDB(resolveDbPath()));
+      const operation = OperationResolver.resolve({ caller: 'mcp.graph.architecture_overview' });
+      const result = await service.engine(input.workspaceId).getGraphStats(operation, input.mode as QueryMode);
+      if (result.status === 'POLICY_VIOLATION') {
+        return result;
+      }
+      const graph = await service.engine(input.workspaceId).getVisibleGraph(operation, input.mode as QueryMode);
+      const communities = detectCommunities(graph.nodes, graph.edges);
+      return QueryResultFactory.withMetadata(result, { markdown: generateArchitectureOverview(communities) });
     },
   });
 
   registerTool({
     name: 'find_hubs',
-    description: 'Find high-degree nodes',
-    inputSchema: { workspaceId: 'string' },
+    description: 'Find high-degree nodes within trust boundary',
+    inputSchema: { workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const edges = db.getEdgesByWorkspace(input.workspaceId);
-      const degree = new Map<string, number>();
-      for (const e of edges) {
-        degree.set(e.from_id, (degree.get(e.from_id) ?? 0) + 1);
-        degree.set(e.to_id, (degree.get(e.to_id) ?? 0) + 1);
-      }
-      return [...degree.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([nodeId, degree]) => ({ nodeId, degree }));
+      const input = z.object({
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.graph.find_hubs' });
+      return engine.findHubs(operation, input.mode as QueryMode, 20);
     },
   });
 
   registerTool({
     name: 'find_bridges',
-    description: 'Find cross-domain edges',
-    inputSchema: { workspaceId: 'string' },
+    description: 'Find cross-domain edges within trust boundary',
+    inputSchema: { workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = new Map(db.getNodesByWorkspace(input.workspaceId, 'canonical').map((n) => [n.id, n]));
-      return db.getEdgesByWorkspace(input.workspaceId).filter((e) => nodes.get(e.from_id)?.domain !== nodes.get(e.to_id)?.domain);
+      const input = z.object({
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.graph.find_bridges' });
+      return engine.findBridges(operation, input.mode as QueryMode);
     },
   });
 
   registerTool({
-    name: 'find_knowledge_gaps',
-    description: 'Find nodes with zero outbound edges',
-    inputSchema: { workspaceId: 'string' },
+    name: 'find_gaps',
+    description: 'Find nodes with zero outbound edges within trust boundary',
+    inputSchema: { workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = db.getNodesByWorkspace(input.workspaceId, 'canonical');
-      const edges = db.getEdgesByWorkspace(input.workspaceId);
-      return nodes.filter((n) => !edges.some((e) => e.from_id === n.id));
+      const input = z.object({
+        workspaceId: z.string(),
+        mode: QueryModeSchema
+      }).parse(args);
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.graph.find_gaps' });
+      return engine.findKnowledgeGaps(operation, input.mode as QueryMode);
     },
   });
 }

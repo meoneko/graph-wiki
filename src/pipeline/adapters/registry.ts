@@ -6,6 +6,12 @@ export interface AdapterRegistration {
   adapterFactory: () => IProjectAdapter;
 }
 
+export interface AdapterResolution {
+  name: string;
+  adapter: IProjectAdapter;
+  filePaths: string[];
+}
+
 class AdapterRegistry {
   private readonly registry: AdapterRegistration[] = [];
 
@@ -13,10 +19,22 @@ class AdapterRegistry {
     this.registry.push({ name, pattern, adapterFactory });
   }
 
-  resolve(context: AdapterContext, filePaths: string[]): IProjectAdapter | undefined {
-    const hit = this.registry.find((entry) => filePaths.some((p) => entry.pattern.test(p)));
-    if (!hit) return undefined;
-    return hit.adapterFactory();
+  resolveAll(_context: AdapterContext, filePaths: string[]): { resolutions: AdapterResolution[]; unmatched: string[] } {
+    const matched = new Set<string>();
+    const resolutions = this.registry
+      .map((entry) => {
+        const files = filePaths.filter((p) => entry.pattern.test(p));
+        files.forEach((file) => matched.add(file));
+        return files.length > 0
+          ? { name: entry.name, adapter: entry.adapterFactory(), filePaths: files }
+          : undefined;
+      })
+      .filter((entry): entry is AdapterResolution => Boolean(entry));
+
+    return {
+      resolutions,
+      unmatched: filePaths.filter((file) => !matched.has(file)),
+    };
   }
 
   resolveByName(name: string): IProjectAdapter | undefined {

@@ -1,42 +1,32 @@
 /**
- * Graph Sidecar Foundation Contracts
- * P0 Frozen Shapes - DO NOT MODIFY without policy review.
+ * Graph Sidecar Adapter/View-Model Layer
+ * Runtime SOT: src/core/types.ts (per spec §7.1.0).
  */
 
-export type GraphKind = 'canonical' | 'exploratory';
+import {
+    GraphKind as CoreGraphKind,
+    ConfidenceBand as CoreConfidenceBand,
+    Provenance as CoreProvenance,
+    GraphNode as CoreGraphNode,
+    GraphEdge as CoreGraphEdge,
+    DecisionStatus,
+    QueryResult,
+} from '../types.js';
 
-export type GraphConfidence = 'AUTHORITATIVE' | 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
+export type GraphKind = CoreGraphKind;
+export type GraphConfidence = CoreConfidenceBand;
+export type GraphProvenance = CoreProvenance;
 
-export interface GraphProvenance {
-    workspaceId: string;
-    artifactSource: string; // e.g., 'validated_fact', 'verified_workspace_relation'
-    producerStage: string;  // e.g., 'validate', 'verify', 'build_exploratory'
-    sourceFile?: string;
-    sourceLocation?: {
-        lineStart?: number;
-        lineEnd?: number;
-    };
-}
-
-export interface GraphNode {
-    id: string;
-    label: string;
-    type: string;
+export interface GraphNode extends CoreGraphNode {
+    // Aliases for camelCase compat if needed by legacy callers
     graphKind: GraphKind;
-    confidence: GraphConfidence;
-    provenance: GraphProvenance;
-    // Optional legacy fields for component compatibility if needed
-    metadata?: Record<string, any>;
 }
 
-export interface GraphEdge {
+export interface GraphEdge extends CoreGraphEdge {
+    // Aliases for camelCase/legacy compat
     from: string;
     to: string;
-    type: string;
     graphKind: GraphKind;
-    confidence: GraphConfidence;
-    provenance: GraphProvenance;
-    metadata?: Record<string, any>;
 }
 
 export interface GraphIndex {
@@ -68,7 +58,8 @@ export interface GraphMeta {
     connectivity?: number;
 }
 
-export interface GraphPathResult {
+export interface GraphPathResult extends QueryResult {
+    // Legacy fields for backward compat
     mode: 'authoritative' | 'exploratory' | 'mixed_safe';
     found: boolean;
     nodes: GraphNode[];
@@ -108,7 +99,9 @@ export type GraphErrorCode =
     | 'WORKSPACE_SCOPE_MISMATCH'
     | 'GRAPH_QUERY_TIMEOUT'
     | 'GRAPH_RESULT_TRUNCATED'
-    | 'GRAPH_STRUCTURE_INCOMPLETE';
+    | 'GRAPH_STRUCTURE_INCOMPLETE'
+    | 'POLICY_VIOLATION'
+    | 'AMBIGUOUS_EVIDENCE';
 
 export interface GraphErrorResponse {
     error: string;
@@ -118,4 +111,26 @@ export interface GraphErrorResponse {
     mode?: string;
     artifact?: string;
     warnings?: string[];
+}
+
+/**
+ * Helper to map core GraphNode to legacy contract GraphNode
+ */
+export function mapToContractNode(node: CoreGraphNode): GraphNode {
+    return {
+        ...node,
+        graphKind: node.graph_kind,
+    };
+}
+
+/**
+ * Helper to map core GraphEdge to legacy contract GraphEdge
+ */
+export function mapToContractEdge(edge: CoreGraphEdge): GraphEdge {
+    return {
+        ...edge,
+        from: edge.from_id,
+        to: edge.to_id,
+        graphKind: edge.graph_kind,
+    };
 }

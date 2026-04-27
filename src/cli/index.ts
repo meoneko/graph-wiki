@@ -1,15 +1,18 @@
-﻿import { runPipeline } from '../pipeline/run.js';
+﻿import { config as dotenvConfig } from 'dotenv';
+dotenvConfig();
+
+import { runPipeline } from '../pipeline/run.js';
 import { startWatch } from '../pipeline/watch.js';
 import { getDiff } from '../pipeline/gitDiff.js';
 import { buildImpactReport } from '../pipeline/impactReport.js';
 import { loadConfig, resolveDbPath } from '../pipeline/config.js';
 import { getDB } from '../storage/GraphDB.js';
-import { GraphArtifactLoader } from '../core/graph/query/GraphArtifactLoader.js';
-import { GraphQueryEngine } from '../core/graph/query/GraphQueryEngine.js';
+import { getTrustedQueryService } from '../core/graph/query/TrustedQueryService.js';
 import { registerRepo } from '../registry/index.js';
 import { exportGraphML } from '../export/graphml.js';
 import { exportObsidian } from '../export/obsidian.js';
 import { exportNeo4j } from '../export/neo4j.js';
+import { OperationResolver } from '../core/graph/query/OperationResolver.js';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -19,6 +22,21 @@ function parseFlag(args: string[], flag: string): string | undefined {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+function positionalArgs(args: string[]): string[] {
+  const valueFlags = new Set(['--workspace', '--diff', '--format']);
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg) continue;
+    if (valueFlags.has(arg)) {
+      i++;
+      continue;
+    }
+    if (!arg.startsWith('--')) out.push(arg);
+  }
+  return out;
 }
 
 function help(): void {
@@ -68,12 +86,12 @@ async function main(): Promise<void> {
   }
 
   if (command === 'ask') {
-    const question = rest.find((r) => !r.startsWith('--'));
+    const question = positionalArgs(rest)[0];
+    const exactOnly = hasFlag(rest, '--exact');
     if (!question) throw new Error('ask requires <question>');
     const ws = await resolveWorkspace(parseFlag(rest, '--workspace'));
-    const engine = new GraphQueryEngine(ws, new GraphArtifactLoader(getDB(resolveDbPath())));
-    const node = await engine.getNode(question).catch(() => undefined);
-    console.log(node ? JSON.stringify(node, null, 2) : 'UNKNOWN');
+    const result = await getTrustedQueryService(getDB(resolveDbPath())).ask(question, ws, 'mixed_safe', exactOnly);
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
 
@@ -105,10 +123,9 @@ async function main(): Promise<void> {
   if (command === 'stats') {
     const workspace = rest[0]?.startsWith('--') ? undefined : rest[0];
     const ws = await resolveWorkspace(workspace);
-    const db = getDB(resolveDbPath());
-    const nodes = db.getNodesByWorkspace(ws, 'canonical');
-    const edges = db.getEdgesByWorkspace(ws);
-    console.log(JSON.stringify({ workspace: ws, nodes: nodes.length, edges: edges.length }, null, 2));
+    const operation = OperationResolver.resolve({ caller: 'cli.stats' });
+    const result = await getTrustedQueryService(getDB(resolveDbPath())).engine(ws).getGraphStats(operation, 'mixed_safe');
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
 
@@ -116,8 +133,9 @@ async function main(): Promise<void> {
     const query = rest.find((r) => !r.startsWith('--'));
     if (!query) throw new Error('search requires <query>');
     const ws = await resolveWorkspace(parseFlag(rest, '--workspace'));
-    const db = getDB(resolveDbPath());
-    console.log(JSON.stringify(db.searchNodesFTS(query, ws, 25), null, 2));
+    const operation = OperationResolver.resolve({ caller: 'cli.search' });
+    const result = await getTrustedQueryService(getDB(resolveDbPath())).engine(ws).searchNodes(query, operation, 'mixed_safe', 25);
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
 
@@ -132,9 +150,9 @@ async function main(): Promise<void> {
   if (command === 'export') {
     const ws = await resolveWorkspace(parseFlag(rest, '--workspace'));
     const format = parseFlag(rest, '--format') ?? 'graphml';
-    const db = getDB(resolveDbPath());
-    const nodes = db.getNodesByWorkspace(ws, 'canonical');
-    const edges = db.getEdgesByWorkspace(ws);
+    const operation = OperationResolver.resolve({ caller: 'cli.export' });
+    const graph = await getTrustedQueryService(getDB(resolveDbPath())).engine(ws).getVisibleGraph(operation, 'authoritative');
+    const { nodes, edges } = graph;
 
     if (format === 'graphml') console.log(exportGraphML(nodes, edges));
     else if (format === 'obsidian') console.log(JSON.stringify(exportObsidian(nodes, edges), null, 2));
