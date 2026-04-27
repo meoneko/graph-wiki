@@ -12,6 +12,13 @@ export type DecisionStatus =
   | 'PARTIAL'
   | 'POLICY_VIOLATION';
 
+export type OperationType =
+  | 'ask'
+  | 'impact'
+  | 'lineage'
+  | 'wiki'
+  | 'governance';
+
 export type QueryMode = 'authoritative' | 'mixed_safe' | 'exploratory';
 
 export type TrustLevel = 'AUTHORITATIVE' | 'DERIVED' | 'EXPLORATORY' | 'MIXED';
@@ -30,15 +37,32 @@ export interface Provenance {
 }
 
 export const EdgeType = {
+  // Structural / control flow
   calls: 'calls',
   imports: 'imports',
   inherits: 'inherits',
   implements: 'implements',
-  uses_authority: 'uses_authority',
+  invokes: 'invokes',
+  dispatches_to: 'dispatches_to',
+  triggers: 'triggers',
   precedes: 'precedes',
   delegates_to: 'delegates_to',
-  canonical_dependency: 'canonical_dependency',
+  contains: 'contains',
+  entry_of: 'entry_of',
+  belongs_to_flow: 'belongs_to_flow',
+  // Data / contract
+  requests: 'requests',
+  returns: 'returns',
+  maps_to: 'maps_to',
+  binds_to: 'binds_to',
+  // Authority
+  uses_authority: 'uses_authority',
   node_uses_authority: 'node_uses_authority',
+  depends_on_authority: 'depends_on_authority',
+  // Layer-specific build artifacts
+  canonical_dependency: 'canonical_dependency',
+  derived_dependency: 'derived_dependency',
+  exploratory_dependency: 'exploratory_dependency',
 } as const;
 
 export type EdgeType = (typeof EdgeType)[keyof typeof EdgeType];
@@ -168,6 +192,7 @@ export interface QueryResult {
   data: {
     nodes: GraphNode[];
     edges: GraphEdge[];
+    [key: string]: unknown;
   };
   confidence: {
     level: ResponseConfidence;
@@ -178,7 +203,21 @@ export interface QueryResult {
   };
   warnings: string[];
   codes: string[];
-  metadata?: Record<string, unknown>;
+  metadata?: {
+    policy?: {
+      operation: OperationType | null;
+      mode: QueryMode | null;
+      traversedEdgeCount: number;
+      blockedEdgeCount: number;
+      blockedCodes: string[];
+    };
+    tool?: {
+      name: string;
+      workspace?: string;
+      project?: string;
+    };
+    [key: string]: unknown;
+  };
 }
 
 export interface IProjectAdapter {

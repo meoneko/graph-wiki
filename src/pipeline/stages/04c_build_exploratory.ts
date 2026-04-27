@@ -19,8 +19,8 @@ function mapProvenance(fact: NormalizedFact, stage: string): Provenance {
 }
 
 export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId: string, db: GraphDB): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
-    // Only process facts that are EXPLORATORY
-    const exploratoryFacts = facts.filter(f => f.trust_level === 'EXPLORATORY' || !f.trust_level);
+    // Only process explicitly classified EXPLORATORY facts. Missing trust is a validation bug.
+    const exploratoryFacts = facts.filter(f => f.trust_level === 'EXPLORATORY');
 
     const nodes: GraphNode[] = exploratoryFacts.map((f) => ({
         id: `node:${f.candidate_id}`,
@@ -30,6 +30,7 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
         type: f.candidate_type,
         graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS',
+        trust_level: 'EXPLORATORY',
         source_file: f.source_file,
         symbol: f.symbol,
         provenance: mapProvenance(f, 'buildExploratoryGraph'),
@@ -38,6 +39,7 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
             http_path: f.http_path,
             domain: f.domain,
             lang_meta: f.lang_meta,
+            is_entrypoint: f.is_entrypoint,
         },
         updated_at: new Date().toISOString(),
     }));
@@ -59,6 +61,7 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
                 type: 'exploratory_dependency',
                 graph_kind: 'exploratory',
                 confidence_band: 'AMBIGUOUS',
+                trust_level: 'EXPLORATORY',
                 metadata: {
                     fromSymbol: from.symbol,
                     toSymbol: to.symbol,

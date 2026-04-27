@@ -2,16 +2,16 @@
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
-import { GraphArtifactLoader } from '../../core/graph/query/GraphArtifactLoader.js';
-import { EdgePolicyTable } from '../../core/graph/traversal/EdgePolicyTable.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
 export function registerSearchTools(): void {
   registerTool({
-    name: 'search_fts',
-    description: 'Search nodes with FTS (trust-aware)',
+    name: 'search',
+    description: 'Search visible graph nodes with trust-aware filtering',
     inputSchema: { query: 'string', workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
       const input = z.object({
@@ -19,40 +19,10 @@ export function registerSearchTools(): void {
         workspaceId: z.string(),
         mode: QueryModeSchema
       }).parse(args);
-      const db = getDB(resolveDbPath());
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const rawResults = db.searchNodesFTS(input.query, input.workspaceId, 50);
-      // Filter results to ensure they belong to allowed layers and satisfy policy
-      return rawResults.filter(node => {
-        const hydrated = artifacts.index.nodeById[node.id];
-        return hydrated && EdgePolicyTable.isNodeVisible(hydrated, mode);
-      });
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.search.search' });
+      return engine.searchNodes(input.query, operation, input.mode as QueryMode, 50);
     },
   });
 
-  registerTool({
-    name: 'search_nodes',
-    description: 'Hybrid search nodes (trust-aware)',
-    inputSchema: { query: 'string', workspaceId: 'string', mode: 'string?' },
-    handler: async (args) => {
-      const input = z.object({
-        query: z.string(),
-        workspaceId: z.string(),
-        mode: QueryModeSchema
-      }).parse(args);
-      const db = getDB(resolveDbPath());
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const rawResults = db.searchNodesFTS(input.query, input.workspaceId, 50);
-      return rawResults.filter(node => {
-        const hydrated = artifacts.index.nodeById[node.id];
-        return hydrated && EdgePolicyTable.isNodeVisible(hydrated, mode);
-      });
-    },
-  });
 }

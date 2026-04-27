@@ -11,7 +11,7 @@
     "crg": "node dist/cli/index.js",
     "dev": "tsx src/cli/index.ts",
     "serve:mcp": "tsx src/mcp/server.ts",
-    "test": "vitest run --passWithNoTests --exclude \"knowledge/**\" --exclude \"dist/**\" --exclude \"packages/**\"",
+    "test": "vitest run --exclude \"knowledge/**\" --exclude \"dist/**\" --exclude \"packages/**\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

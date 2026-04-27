@@ -80,6 +80,7 @@ export class CSharpAdapter implements IProjectAdapter {
         kind: symbol.kind,
         namespace: symbol.namespace,
         containingClass: symbol.containingClass,
+        semantic_role: this.inferSemanticRole(symbol),
       },
     };
   }
@@ -87,10 +88,14 @@ export class CSharpAdapter implements IProjectAdapter {
   private resolveNodeType(symbol: ParsedSymbol): string {
     if (symbol.annotations.some((a) => /Http(Get|Post|Put|Delete|Patch)/i.test(a))) return 'csharp_controller_action';
     if (symbol.name.match(/^Map(Get|Post|Put|Delete|Patch):/)) return 'csharp_minimal_api';
-    if (symbol.kind === 'class' && symbol.name.match(/(UseCase|Handler)$/)) return 'csharp_usecase';
-    if (symbol.name.match(/(Dto|Request|Response|Command|Query)$/)) return 'csharp_dto';
     if (symbol.kind === 'interface') return 'csharp_interface';
     return 'csharp_class';
+  }
+
+  private inferSemanticRole(symbol: ParsedSymbol): string | undefined {
+    if (symbol.kind === 'class' && symbol.name.match(/(UseCase|Handler)$/)) return 'usecase';
+    if (symbol.name.match(/(Dto|Request|Response|Command|Query)$/)) return 'dto';
+    return undefined;
   }
 
   private extractHttpMethod(symbol: ParsedSymbol): string | undefined {

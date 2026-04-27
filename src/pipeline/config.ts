@@ -36,6 +36,7 @@ export interface WorkspaceConfig {
   profile_mode?: 'bootstrap' | 'configured';
   projects: string[];
   verification?: WorkspaceVerification;
+  external_workflow_enabled?: boolean;
   governance?: {
     authority_chain?: string[];
     forbidden_patterns?: string[];

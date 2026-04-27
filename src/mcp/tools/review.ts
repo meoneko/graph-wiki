@@ -4,9 +4,9 @@ import { buildImpactReport } from '../../pipeline/impactReport.js';
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
-import { GraphArtifactLoader } from '../../core/graph/query/GraphArtifactLoader.js';
-import { EdgePolicyTable } from '../../core/graph/traversal/EdgePolicyTable.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
@@ -44,7 +44,7 @@ export function registerReviewTools(): void {
   });
 
   registerTool({
-    name: 'get_blast_radius',
+    name: 'blast_radius',
     description: 'Get trust-aware blast radius from node',
     inputSchema: { nodeId: 'string', workspaceId: 'string', mode: 'string?' },
     handler: async (args) => {
@@ -53,32 +53,9 @@ export function registerReviewTools(): void {
         workspaceId: z.string(),
         mode: QueryModeSchema
       }).parse(args);
-      const db = getDB(resolveDbPath());
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const nodes = artifacts.index.nodeById;
-      const edges = Object.values(artifacts.index.edgeById).filter(e => EdgePolicyTable.isEdgeTraversable(e, mode));
-
-      const startNode = nodes[input.nodeId];
-      if (!startNode || !EdgePolicyTable.isNodeVisible(startNode, mode)) return [];
-
-      const visited = new Set<string>([input.nodeId]);
-      const queue = [input.nodeId];
-      while (queue.length > 0) {
-        const cur = queue.shift()!;
-        // Use edges where 'cur' is the source (downstream impact)
-        const outgoing = edges.filter(e => e.from_id === cur);
-        for (const e of outgoing) {
-          const target = nodes[e.to_id];
-          if (target && !visited.has(e.to_id) && EdgePolicyTable.isNodeVisible(target, mode)) {
-            visited.add(e.to_id);
-            queue.push(e.to_id);
-          }
-        }
-      }
-      return [...visited];
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.review.blast_radius' });
+      return engine.getBlastRadiusIds(input.nodeId, operation, input.mode as QueryMode);
     },
   });
 
@@ -92,14 +69,9 @@ export function registerReviewTools(): void {
         workspaceId: z.string(),
         mode: QueryModeSchema
       }).parse(args);
-      const db = getDB(resolveDbPath());
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const edges = Object.values(artifacts.index.edgeById).filter(e => EdgePolicyTable.isEdgeTraversable(e, mode));
-      const touching = edges.filter((e) => input.nodeIds.includes(e.from_id) || input.nodeIds.includes(e.to_id)).length;
-      return { riskScore: Math.min(100, input.nodeIds.length * 7 + touching * 3) };
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.review.get_risk_score' });
+      return engine.getRiskScore(input.nodeIds, operation, input.mode as QueryMode);
     },
   });
 }

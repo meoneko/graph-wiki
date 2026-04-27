@@ -3,9 +3,10 @@ import { getDB } from '../../storage/GraphDB.js';
 import { loadConfig, resolveDbPath } from '../../pipeline/config.js';
 import { generateWiki } from '../../pipeline/stages/07_wiki.js';
 import { registerTool } from './runtime.js';
-import { GraphArtifactLoader } from '../../core/graph/query/GraphArtifactLoader.js';
-import { EdgePolicyTable } from '../../core/graph/traversal/EdgePolicyTable.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
+import { QueryResultFactory } from '../../core/graph/query/QueryResultFactory.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
@@ -22,15 +23,16 @@ export function registerWikiTools(): void {
       }).parse(args);
       const config = await loadConfig();
       const db = getDB(resolveDbPath(config));
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const node = artifacts.index.nodeById[input.nodeId];
-      if (!node || !EdgePolicyTable.isNodeVisible(node, mode)) {
-        return { error: 'NODE_NOT_FOUND_OR_INACCESSIBLE_UNDER_POLICY' };
+      const engine = getTrustedQueryService(db).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.wiki.get_wiki_page' });
+      const result = await engine.getNode(input.nodeId, operation, input.mode as QueryMode);
+      const node = result.data.nodes[0];
+      if (!node) {
+        return result;
       }
-      return { markdown: `# ${node.label}\n\nType: ${node.type}\n\nSource: ${node.source_file ?? 'UNKNOWN'}\nTrust Level: ${node.trust_level}` };
+      return QueryResultFactory.withMetadata(result, {
+        markdown: `# ${node.label}\n\nType: ${node.type}\n\nSource: ${node.source_file ?? 'UNKNOWN'}\nTrust Level: ${node.trust_level ?? node.confidence_band}`,
+      });
     },
   });
 
@@ -45,15 +47,15 @@ export function registerWikiTools(): void {
       }).parse(args);
       const config = await loadConfig();
       const db = getDB(resolveDbPath(config));
-      const loader = new GraphArtifactLoader(db);
-      const artifacts = await loader.load(input.workspaceId);
-      const mode = input.mode as QueryMode;
-
-      const nodes = Object.values(artifacts.index.nodeById).filter(n => EdgePolicyTable.isNodeVisible(n, mode));
-      const edges = Object.values(artifacts.index.edgeById).filter(e => EdgePolicyTable.isEdgeTraversable(e, mode));
-
-      await generateWiki(input.workspaceId, nodes, edges, db, config);
-      return { ok: true, nodeCount: nodes.length };
+      const engine = getTrustedQueryService(db).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.wiki.generate_wiki' });
+      const stats = await engine.getGraphStats(operation, input.mode as QueryMode);
+      if (stats.status === 'POLICY_VIOLATION') {
+        return stats;
+      }
+      const graph = await engine.getVisibleGraph(operation, input.mode as QueryMode);
+      await generateWiki(input.workspaceId, graph.nodes, graph.edges, db, config);
+      return stats;
     },
   });
 }

@@ -2,6 +2,8 @@
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
+import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 
 export function registerRefactorTools(): void {
   registerTool({
@@ -10,9 +12,9 @@ export function registerRefactorTools(): void {
     inputSchema: { oldSymbol: 'string', newSymbol: 'string', workspaceId: 'string' },
     handler: async (args) => {
       const input = z.object({ oldSymbol: z.string(), newSymbol: z.string(), workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const hits = db.getNodesByWorkspace(input.workspaceId, 'canonical').filter((n) => n.symbol?.includes(input.oldSymbol));
-      return { affectedFiles: [...new Set(hits.map((h) => h.source_file).filter(Boolean))], proposedSymbol: input.newSymbol };
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.refactor.rename_preview' });
+      return engine.renamePreview(input.oldSymbol, input.newSymbol, operation, 'authoritative');
     },
   });
 
@@ -22,10 +24,9 @@ export function registerRefactorTools(): void {
     inputSchema: { workspaceId: 'string' },
     handler: async (args) => {
       const input = z.object({ workspaceId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = db.getNodesByWorkspace(input.workspaceId, 'canonical');
-      const edges = db.getEdgesByWorkspace(input.workspaceId);
-      return nodes.filter((n) => !edges.some((e) => e.to_id === n.id));
+      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
+      const operation = OperationResolver.resolve({ caller: 'mcp.refactor.find_dead_code' });
+      return engine.findDeadCode(operation, 'authoritative');
     },
   });
 }

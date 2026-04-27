@@ -70,8 +70,9 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
     const changedFiles = await getFilesToExtract(project, db, options);
     if (changedFiles.length === 0) continue;
 
-    const adapter = globalAdapterRegistry.resolve({ workspaceId: workspace.id, projectId: project.id, projectRoot: project.path }, changedFiles);
-    if (!adapter) {
+    const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path };
+    const { resolutions, unmatched } = globalAdapterRegistry.resolveAll(context, changedFiles);
+    if (resolutions.length === 0) {
       rejects.push({
         id: `${workspace.id}:${project.id}:adapter_not_found`,
         workspace: workspace.id,
@@ -83,13 +84,25 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
       continue;
     }
 
-    const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path };
-    const parsed = await adapter.parse(changedFiles, context);
-    const extracted = await adapter.extract(parsed, context);
-    const enriched = await adapter.enrich(extracted, context);
-    const classified = await adapter.classify(enriched, context);
-    const entrypointed = await adapter.identify_entrypoints(classified, context);
-    allCandidates.push(...entrypointed);
+    for (const file of unmatched) {
+      rejects.push({
+        id: `${workspace.id}:${project.id}:adapter_not_found:${sha1(file)}`,
+        workspace: workspace.id,
+        project: project.id,
+        stage: 'extract',
+        reason_code: 'ADAPTER_NOT_FOUND_FOR_FILE',
+        details: file,
+      });
+    }
+
+    for (const resolution of resolutions) {
+      const parsed = await resolution.adapter.parse(resolution.filePaths, context);
+      const extracted = await resolution.adapter.extract(parsed, context);
+      const enriched = await resolution.adapter.enrich(extracted, context);
+      const classified = await resolution.adapter.classify(enriched, context);
+      const entrypointed = await resolution.adapter.identify_entrypoints(classified, context);
+      allCandidates.push(...entrypointed);
+    }
   }
 
   return { candidates: allCandidates, rejects };

@@ -17,7 +17,7 @@ export function mapConfidenceToBand(confidence: string | undefined): ConfidenceB
         case 'AMBIGUOUS':
             return 'AMBIGUOUS';
         default:
-            return 'EXTRACTED'; // Default for P0
+            throw new Error(`INVALID_GRAPH_STATE: invalid confidence '${confidence ?? 'missing'}'`);
     }
 }
 
@@ -29,18 +29,25 @@ export function mapProvenance(prov: any): Provenance {
     if (prov && typeof prov === 'object' && prov.source) {
         return prov as Provenance;
     }
-    return {
-        source: 'parser',
-        artifact_source: 'legacy_load',
-        producer_stage: 'migration',
-        timestamp: new Date().toISOString(),
-    };
+    throw new Error('INVALID_GRAPH_STATE: missing provenance');
+}
+
+function mapGraphKind(kind: string | undefined): GraphKind {
+    switch (kind) {
+        case 'canonical':
+        case 'derived':
+        case 'exploratory':
+        case 'external':
+            return kind;
+        default:
+            throw new Error(`INVALID_GRAPH_STATE: invalid graph_kind '${kind ?? 'missing'}'`);
+    }
 }
 
 export function mapNodeFromDB(raw: any): GraphNode {
     return {
         ...raw,
-        graph_kind: (raw.graph_kind || 'canonical') as GraphKind,
+        graph_kind: mapGraphKind(raw.graph_kind),
         confidence_band: mapConfidenceToBand(raw.confidence),
         provenance: mapProvenance(raw.provenance ? JSON.parse(raw.provenance) : null),
         metadata: raw.metadata ? JSON.parse(raw.metadata) : {},
@@ -51,7 +58,7 @@ export function mapNodeFromDB(raw: any): GraphNode {
 export function mapEdgeFromDB(raw: any): GraphEdge {
     return {
         ...raw,
-        graph_kind: (raw.graph_kind || 'canonical') as GraphKind,
+        graph_kind: mapGraphKind(raw.graph_kind),
         confidence_band: mapConfidenceToBand(raw.confidence),
         provenance: mapProvenance(raw.provenance ? JSON.parse(raw.provenance) : null),
         metadata: raw.metadata ? JSON.parse(raw.metadata) : {},

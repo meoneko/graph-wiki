@@ -1,18 +1,18 @@
-﻿import type { GraphNode, QueryMode } from '../core/types.js';
-import type { GraphPathResult } from '../core/graph/types.js';
-import { TrustAwareQueryEngine } from '../core/graph/query/TrustAwareQueryEngine.js';
-import { GraphArtifactLoader } from '../core/graph/query/GraphArtifactLoader.js';
+import type { GraphNode, QueryMode, QueryResult } from '../core/types.js';
+import { getTrustedQueryService } from '../core/graph/query/TrustedQueryService.js';
 import { getDB } from '../storage/GraphDB.js';
 import { resolveDbPath } from './config.js';
 import type { DiffEntry } from './gitDiff.js';
+import { OperationResolver } from '../core/graph/query/OperationResolver.js';
+import { QueryResultFactory } from '../core/graph/query/QueryResultFactory.js';
 
-export interface ImpactReport {
+export interface ImpactReport extends QueryResult {
   changedNodes: GraphNode[];
   affectedNodes: GraphNode[];
   affectedEntrypoints: GraphNode[];
   riskScore: number;
   riskRationale: string[];
-  criticalPaths: any[]; // Changed from GraphPathResult to tolerate QueryResult
+  criticalPaths: QueryResult[];
   affectedFlows: Array<{ id: string; title: string }>;
   reviewSuggestions: string[];
 }
@@ -20,47 +20,91 @@ export interface ImpactReport {
 export async function buildImpactReport(
   diff: DiffEntry[],
   workspaceId: string,
-  mode: QueryMode = 'mixed_safe'
+  mode: QueryMode = 'mixed_safe',
 ): Promise<ImpactReport> {
-  const db = getDB(resolveDbPath());
-  const loader = new GraphArtifactLoader(db);
-  const engine = new TrustAwareQueryEngine(workspaceId, loader);
+  const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(workspaceId);
+  const operation = OperationResolver.resolve({ caller: 'pipeline.impact' });
 
-  const allNodes = db.getNodesByWorkspace(workspaceId, 'canonical');
-  const changedNodes = allNodes.filter((n) => diff.some((d) => n.source_file?.endsWith(d.filePath)));
+  const graphStats = await engine.getGraphStats(operation, mode);
+  if (graphStats.status === 'POLICY_VIOLATION') {
+    return {
+      ...graphStats,
+      changedNodes: [],
+      affectedNodes: [],
+      affectedEntrypoints: [],
+      riskScore: 0,
+      riskRationale: ['Graph validation failed before impact analysis'],
+      criticalPaths: [],
+      affectedFlows: [],
+      reviewSuggestions: ['Fix graph validation errors before reviewing impact'],
+    };
+  }
+
+  const visibleGraph = await engine.getVisibleGraph(operation, mode);
+  const allNodes = visibleGraph.nodes.filter((node) => node.graph_kind === 'canonical');
+  const changedNodes = allNodes
+    .filter((n) => diff.some((d) => n.source_file?.endsWith(d.filePath)))
+    .slice(0, 200);
 
   const affectedNodeMap = new Map<string, GraphNode>();
-  const criticalResults: any[] = [];
+  const criticalResults: QueryResult[] = [];
+  const warnings: string[] = [];
 
   for (const node of changedNodes) {
-    const impact = await engine.analyzeImpact(node.id, mode, 5);
-    for (const impacted of impact.nodes) affectedNodeMap.set(impacted.id, impacted);
+    const impact = await engine.analyzeImpact(node.id, operation, mode, 5);
+    warnings.push(...impact.warnings);
+    for (const impacted of impact.data.nodes) affectedNodeMap.set(impacted.id, impacted);
 
-    // Look for entrypoints in the impact set
-    const entrypoints = impact.nodes.filter((n) =>
-      n.type.includes('api') || n.type.includes('route') || n.type.includes('controller')
-    );
+    const entrypoints = impact.data.nodes
+      .filter((n) => n.type.includes('api') || n.type.includes('route') || n.type.includes('controller'))
+      .slice(0, 50);
+
+    if (entrypoints.length === 50) warnings.push('IMPACT_ENTRYPOINT_LIMIT_REACHED');
 
     for (const ep of entrypoints) {
-      const result = await engine.findReasoningPaths(node.id, ep.id, mode);
-      if (result.status === 'OK' || result.status === 'AMBIGUOUS') {
+      const result = await engine.findReasoningPaths(node.id, ep.id, operation, mode);
+      if (result.status === 'OK' || result.status === 'AMBIGUOUS' || result.status === 'PARTIAL') {
         criticalResults.push(result);
       }
     }
   }
+
+  if (changedNodes.length === 200) warnings.push('CHANGED_NODE_LIMIT_REACHED');
 
   const affectedNodes = [...affectedNodeMap.values()];
   const affectedEntrypoints = affectedNodes.filter((n) =>
     n.type.includes('api') || n.type.includes('route') || n.type.includes('controller')
   );
 
-  const riskScore = Math.min(100,
-    changedNodes.length * 10 +
-    affectedEntrypoints.length * 8 +
-    criticalResults.length * 4
-  );
-
+  const riskResult = await engine.getRiskScore(affectedNodes.map((node) => node.id), operation, mode);
+  const riskScore = Number(riskResult.metadata?.riskScore ?? 0);
   return {
+    ...QueryResultFactory.create({
+      status: warnings.length > 0 ? 'PARTIAL' : 'OK',
+      nodes: affectedNodes,
+      edges: [],
+      selectedPaths: criticalResults.flatMap((result) => result.reasoning.selected_paths),
+      rejectedPaths: criticalResults.flatMap((result) => result.reasoning.rejected_paths ?? []),
+      reasons: [
+        'Impact report built through TrustAwareQueryEngine',
+        `changed_nodes=${changedNodes.length}`,
+        `affected_nodes=${affectedNodes.length}`,
+      ],
+      confidenceLevel: affectedNodes.some((node) => node.trust_level !== 'AUTHORITATIVE') ? 'MEDIUM' : 'HIGH',
+      confidenceReasons: ['Impact uses trust-filtered visible graph and trust-weighted risk score'],
+      provenanceSources: affectedNodes.map((node) => node.provenance),
+      warnings: [...new Set(warnings)],
+      codes: [],
+      metadata: {
+        policy: {
+          operation,
+          mode,
+          traversedEdgeCount: affectedNodes.length,
+          blockedEdgeCount: 0,
+          blockedCodes: [],
+        },
+      },
+    }),
     changedNodes,
     affectedNodes,
     affectedEntrypoints,
@@ -70,7 +114,8 @@ export async function buildImpactReport(
       `affected_nodes=${affectedNodes.length}`,
       `affected_entrypoints=${affectedEntrypoints.length}`,
       `critical_paths=${criticalResults.length}`,
-      `query_mode=${mode}`
+      `query_mode=${mode}`,
+      'risk_score=trust_weighted',
     ],
     criticalPaths: criticalResults,
     affectedFlows: [],

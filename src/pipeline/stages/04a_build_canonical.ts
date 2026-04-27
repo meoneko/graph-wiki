@@ -18,9 +18,19 @@ function mapProvenance(fact: NormalizedFact, stage: string): Provenance {
     };
 }
 
+function isSupportedCodeFile(file: string): boolean {
+    return /\.(cs|ts|tsx|js|jsx)$/i.test(file) && !/\.md$/i.test(file);
+}
+
+function isAuthoritativeCanonicalFact(fact: NormalizedFact): boolean {
+    const extractor = String(fact.lang_meta?.extractor ?? fact.extractor ?? '').toLowerCase();
+    return fact.trust_level === 'AUTHORITATIVE'
+        && isSupportedCodeFile(fact.source_file)
+        && (extractor.includes('parser-static') || extractor.includes('parser-verified') || extractor === 'csharp_tree_sitter');
+}
+
 export async function buildCanonicalGraph(facts: NormalizedFact[], workspaceId: string, db: GraphDB): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
-    // Only process facts that are AUTHORITATIVE for the canonical layer
-    const canonicalFacts = facts.filter(f => f.trust_level === 'AUTHORITATIVE');
+    const canonicalFacts = facts.filter(isAuthoritativeCanonicalFact);
 
     const nodes: GraphNode[] = canonicalFacts.map((f) => ({
         id: `node:${f.candidate_id}`,
@@ -30,6 +40,7 @@ export async function buildCanonicalGraph(facts: NormalizedFact[], workspaceId: 
         type: f.candidate_type,
         graph_kind: 'canonical',
         confidence_band: f.trust_level === 'AUTHORITATIVE' ? 'AUTHORITATIVE' : 'EXTRACTED',
+        trust_level: 'AUTHORITATIVE',
         source_file: f.source_file,
         symbol: f.symbol,
         provenance: mapProvenance(f, 'buildCanonicalGraph'),
@@ -38,6 +49,7 @@ export async function buildCanonicalGraph(facts: NormalizedFact[], workspaceId: 
             http_path: f.http_path,
             domain: f.domain,
             lang_meta: f.lang_meta,
+            is_entrypoint: f.is_entrypoint,
         },
         updated_at: new Date().toISOString(),
     }));
@@ -59,6 +71,7 @@ export async function buildCanonicalGraph(facts: NormalizedFact[], workspaceId: 
                 type: 'canonical_dependency',
                 graph_kind: 'canonical',
                 confidence_band: f.trust_level === 'AUTHORITATIVE' ? 'AUTHORITATIVE' : 'EXTRACTED',
+                trust_level: 'AUTHORITATIVE',
                 metadata: {
                     fromSymbol: from.symbol,
                     toSymbol: to.symbol,

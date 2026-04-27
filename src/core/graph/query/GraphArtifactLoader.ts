@@ -1,6 +1,22 @@
 ﻿import type { GraphEdge, GraphNode } from '../../types.js';
 import type { GraphMeta } from '../contracts.js';
 import { GraphDB } from '../../../storage/GraphDB.js';
+import { GraphValidator, type ValidationIssue } from '../validation/GraphValidator.js';
+import { GovernanceValidator, type GovernanceIssue } from '../validation/GovernanceValidator.js';
+
+export class GraphValidationError extends Error {
+  readonly codes: string[];
+
+  constructor(
+    readonly validationIssues: ValidationIssue[],
+    readonly governanceIssues: GovernanceIssue[],
+  ) {
+    const codes = [...validationIssues.map((issue) => issue.code), ...governanceIssues.map((issue) => issue.code)];
+    super(`INVALID_GRAPH_STATE: ${[...new Set(codes)].join(', ')}`);
+    this.name = 'GraphValidationError';
+    this.codes = [...new Set(codes)];
+  }
+}
 
 export interface LoadedGraphArtifacts {
   canonical: { nodes: GraphNode[]; edges: GraphEdge[] };
@@ -66,6 +82,10 @@ export class GraphArtifactLoader {
       pushMap(adjacency, e.from_id, e.to_id);
     });
 
+    const canonicalDensity = canonicalNodes.length <= 1
+      ? 0
+      : Number((canonicalEdges.length / (canonicalNodes.length * (canonicalNodes.length - 1))).toFixed(6));
+
     const meta: GraphMeta = {
       workspaceId,
       builtAt: new Date().toISOString(),
@@ -73,7 +93,7 @@ export class GraphArtifactLoader {
       canonical: { nodeCount: canonicalNodes.length, edgeCount: canonicalEdges.length, confidenceCounts: {} },
       exploratory: { nodeCount: exploratoryNodes.length, edgeCount: exploratoryEdges.length, confidenceCounts: {} },
       traversalReady: allEdges.length > 0,
-      connectivity: allEdges.length === 0 ? 0 : Number((allEdges.length / Math.max(1, canonicalNodes.length)).toFixed(3)),
+      connectivity: canonicalDensity,
     };
 
     const artifacts: LoadedGraphArtifacts = {
@@ -84,6 +104,15 @@ export class GraphArtifactLoader {
       index: { nodeById, edgeById, adjacency, edgesBySource, edgesByTarget, labelLookup, typeLookup },
       meta,
     };
+
+    const allNodes = [...canonicalNodes, ...derivedNodes, ...exploratoryNodes, ...externalNodes];
+    const graphValidation = GraphValidator.validate(allNodes, allEdges, {
+      externalWorkflowEnabled: false,
+    });
+    const governanceValidation = GovernanceValidator.validate(allNodes, allEdges);
+    if (!graphValidation.passed || !governanceValidation.passed) {
+      throw new GraphValidationError(graphValidation.issues, governanceValidation.issues);
+    }
 
     this.cache.set(workspaceId, { artifacts, loadedAt: Date.now() });
     return artifacts;

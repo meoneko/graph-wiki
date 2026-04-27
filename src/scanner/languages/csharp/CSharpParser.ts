@@ -339,8 +339,8 @@ export class CSharpParser implements ILanguageParser {
     const seen = new Set<string>();
     for (const inv of this.collectByType(node, 'invocation_expression')) {
       const raw = text(inv, source);
-      const m = raw.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
-      const name = m?.[1];
+      const matches = [...raw.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]+>)?\s*\(/g)];
+      const name = matches.at(-1)?.[1];
       if (!name || CSHARP_BUILTIN_SYMBOLS.has(name) || seen.has(name)) continue;
       seen.add(name);
       out.push({

@@ -30,6 +30,7 @@ export async function buildDerivedGraph(facts: NormalizedFact[], workspaceId: st
         type: f.candidate_type,
         graph_kind: 'derived',
         confidence_band: 'EXTRACTED', // Derived usually means semi-authoritative
+        trust_level: 'DERIVED',
         source_file: f.source_file,
         symbol: f.symbol,
         provenance: mapProvenance(f, 'buildDerivedGraph'),
@@ -38,6 +39,7 @@ export async function buildDerivedGraph(facts: NormalizedFact[], workspaceId: st
             http_path: f.http_path,
             domain: f.domain,
             lang_meta: f.lang_meta,
+            is_entrypoint: f.is_entrypoint,
         },
         updated_at: new Date().toISOString(),
     }));
@@ -59,6 +61,7 @@ export async function buildDerivedGraph(facts: NormalizedFact[], workspaceId: st
                 type: 'derived_dependency',
                 graph_kind: 'derived',
                 confidence_band: 'EXTRACTED',
+                trust_level: 'DERIVED',
                 metadata: {
                     fromSymbol: from.symbol,
                     toSymbol: to.symbol,
