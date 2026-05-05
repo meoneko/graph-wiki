@@ -1,4 +1,4 @@
-import type Parser from 'tree-sitter';
+﻿import type Parser from 'tree-sitter';
 import CSharpGrammar from 'tree-sitter-c-sharp';
 import { TreeSitterWrapper } from '../../core/TreeSitterWrapper.js';
 import type { ILanguageParser, ImportDecl, ParsedFile, ParsedSymbol, CalledSymbol } from '../../core/ILanguageParser.js';
@@ -19,11 +19,10 @@ export class CSharpParser implements ILanguageParser {
     const root = tree.rootNode;
     const symbols: ParsedSymbol[] = [
       ...this.extractTopLevelStatements(root, sourceCode),
-      ...this.extractControllerActions(root, sourceCode),
+      ...this.extractMethods(root, sourceCode),
       ...this.extractMinimalApiRoutes(root, sourceCode),
       ...this.extractUseCases(root, sourceCode),
       ...this.extractDTOs(root, sourceCode),
-      ...this.extractExtensionMethods(root, sourceCode),
       ...this.extractPartialClasses(root, sourceCode),
       ...this.extractClasses(root, sourceCode),
     ];
@@ -36,7 +35,7 @@ export class CSharpParser implements ILanguageParser {
     };
   }
 
-  // ── Qualified name resolution ────────────────────────────────────────────
+  // â”€â”€ Qualified name resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private resolveQualifiedInfo(
     node: Parser.SyntaxNode,
@@ -77,7 +76,7 @@ export class CSharpParser implements ILanguageParser {
     return { qualifiedName: parts.join('.'), containingClass, namespace };
   }
 
-  // ── Annotation extraction (correct: only preceding sibling attribute_list) ─
+  // â”€â”€ Annotation extraction (correct: only preceding sibling attribute_list) â”€
 
   private getMethodAnnotations(methodNode: Parser.SyntaxNode, source: string): string[] {
     const annotations: string[] = [];
@@ -90,7 +89,7 @@ export class CSharpParser implements ILanguageParser {
     return annotations;
   }
 
-  // ── Extractors ───────────────────────────────────────────────────────────
+  // â”€â”€ Extractors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private extractTopLevelStatements(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
     const globalStmts = root.namedChildren.filter((n) => n.type === 'global_statement');
@@ -115,13 +114,11 @@ export class CSharpParser implements ILanguageParser {
     }];
   }
 
-  private extractControllerActions(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractMethods(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
     return this.collectByType(root, 'method_declaration')
       .map((m) => this.toMethodSymbol(m, source))
-      .filter((s): s is ParsedSymbol => s !== undefined)
-      .filter((s) => s.annotations.some((a) => /Http(Get|Post|Put|Delete|Patch)/i.test(a)));
+      .filter((s): s is ParsedSymbol => s !== undefined);
   }
-
   private extractMinimalApiRoutes(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     for (const inv of this.collectByType(root, 'invocation_expression')) {
@@ -307,7 +304,7 @@ export class CSharpParser implements ILanguageParser {
     }));
   }
 
-  // ── Symbol helpers ───────────────────────────────────────────────────────
+  // â”€â”€ Symbol helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private toMethodSymbol(node: Parser.SyntaxNode, source: string): ParsedSymbol | undefined {
     const nameNode = node.childForFieldName('name');
@@ -343,10 +340,12 @@ export class CSharpParser implements ILanguageParser {
       const name = matches.at(-1)?.[1];
       if (!name || CSHARP_BUILTIN_SYMBOLS.has(name) || seen.has(name)) continue;
       seen.add(name);
+      const receiverMatch = raw.match(new RegExp(`([A-Za-z_][A-Za-z0-9_\\.<>]*)\\s*\\.\\s*${name}\\s*(?:<[^>]+>)?\\s*\\(`));
       out.push({
         name,
         qualifiedName: name,
-        callSite: { line: inv.startPosition.row + 1, column: inv.startPosition.column + 1 },
+        receiver: receiverMatch?.[1],
+        callSite: { line: inv.startPosition.row + 1, column: inv.startPosition.column },
       });
     }
     return out;

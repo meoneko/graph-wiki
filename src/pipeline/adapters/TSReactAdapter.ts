@@ -2,7 +2,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AdapterContext, CandidateRecord, EvidenceSpan, IProjectAdapter } from '../../core/types.js';
-import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
 
 interface ParsedTsFile {
   filePath: string;
@@ -43,11 +42,12 @@ export class TSReactAdapter implements IProjectAdapter {
         const raw = match[0];
         const line = getLine(file.content, match.index ?? 0);
         const routePath = raw.match(/['"`]([^'"`]+)['"`]/)?.[1] ?? '/unknown';
-        const type = 'ts_route';
-        if (!nodeTypeRegistry.has(type)) continue;
+        const type = 'function' as const;
         candidates.push({
           candidate_id: stableId(type, file.filePath, raw, String(line)),
           candidate_type: type,
+          roles: [],
+          language: file.filePath.match(/\.jsx?$/i) ? 'javascript' : 'typescript',
           workspaceId: context.workspaceId,
           project: context.projectId,
           source_file: file.filePath,
@@ -57,9 +57,8 @@ export class TSReactAdapter implements IProjectAdapter {
           status: 'candidate',
           extractor: 'ts_react_adapter',
           evidence: [makeEvidence(file.filePath, line, raw)],
-          is_entrypoint: true,
           http_path: routePath,
-          lang_meta: { kind: 'route' },
+          lang_meta: { kind: 'route', originalType: 'ts_route' },
         });
       }
 
@@ -67,11 +66,12 @@ export class TSReactAdapter implements IProjectAdapter {
       for (const match of apiMatches) {
         const raw = match[0];
         const line = getLine(file.content, match.index ?? 0);
-        const type = 'ts_api_endpoint';
-        if (!nodeTypeRegistry.has(type)) continue;
+        const type = 'function' as const;
         candidates.push({
           candidate_id: stableId(type, file.filePath, raw, String(line)),
           candidate_type: type,
+          roles: [],
+          language: file.filePath.match(/\.jsx?$/i) ? 'javascript' : 'typescript',
           workspaceId: context.workspaceId,
           project: context.projectId,
           source_file: file.filePath,
@@ -81,8 +81,7 @@ export class TSReactAdapter implements IProjectAdapter {
           status: 'candidate',
           extractor: 'ts_react_adapter',
           evidence: [makeEvidence(file.filePath, line, raw)],
-          is_entrypoint: false,
-          lang_meta: { kind: 'api_call' },
+          lang_meta: { kind: 'api_call', originalType: 'ts_api_endpoint' },
         });
       }
     }
@@ -98,7 +97,4 @@ export class TSReactAdapter implements IProjectAdapter {
     return candidates;
   }
 
-  async identify_entrypoints(candidates: CandidateRecord[]): Promise<CandidateRecord[]> {
-    return candidates.map((c) => ({ ...c, is_entrypoint: nodeTypeRegistry.isEntrypoint(c.candidate_type) }));
-  }
 }

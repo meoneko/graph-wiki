@@ -100,8 +100,7 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
       const extracted = await resolution.adapter.extract(parsed, context);
       const enriched = await resolution.adapter.enrich(extracted, context);
       const classified = await resolution.adapter.classify(enriched, context);
-      const entrypointed = await resolution.adapter.identify_entrypoints(classified, context);
-      allCandidates.push(...entrypointed);
+      allCandidates.push(...classified);
     }
   }
 

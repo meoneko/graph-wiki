@@ -1,5 +1,6 @@
-﻿import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 import { registerAllTools } from './tools/index.js';
 import { getRegisteredTools, invokeTool } from './tools/runtime.js';
 import { registerAllPrompts } from './prompts/index.js';
@@ -8,16 +9,75 @@ import { getRegisteredPrompts } from './prompts/runtime.js';
 registerAllTools();
 registerAllPrompts();
 
-const server = new Server({ name: 'code-review-graph', version: '1.0.0' }, { capabilities: { tools: {}, prompts: {} } });
+export const mcpServer = new McpServer(
+  { name: 'code-review-graph', version: '1.0.0' },
+  { capabilities: { tools: {}, prompts: {}, resources: { subscribe: true } } },
+);
 
-server.setRequestHandler('tools/list' as never, async () => ({ tools: getRegisteredTools().map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) }));
-server.setRequestHandler('tools/call' as never, async (req: any) => ({ content: [{ type: 'text', text: JSON.stringify(await invokeTool(req.params.name, req.params.arguments ?? {}), null, 2) }] }));
-server.setRequestHandler('prompts/list' as never, async () => ({ prompts: getRegisteredPrompts().map((p) => ({ name: p.name, description: p.description })) }));
-server.setRequestHandler('prompts/get' as never, async (req: any) => {
-  const prompt = getRegisteredPrompts().find((p) => p.name === req.params.name);
-  if (!prompt) throw new Error(`Prompt not found: ${req.params.name}`);
-  return { description: prompt.description, messages: [{ role: 'user', content: { type: 'text', text: prompt.template } }] };
-});
+export function notifyGraphUpdated(): void {
+  try {
+    mcpServer.server.notification({
+      method: 'notifications/resources/updated',
+      params: { uri: 'crg://graph/data' },
+    });
+  } catch (err) {
+    // Ignore if no clients connected or transport not ready
+  }
+}
+
+const passthroughArgsSchema = z.object({}).passthrough();
+
+function zodFromLegacySchema(schema: Record<string, string>): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    switch (value) {
+      case 'string':   shape[key] = z.string(); break;
+      case 'string?':  shape[key] = z.string().optional(); break;
+      case 'number':   shape[key] = z.number(); break;
+      case 'number?':  shape[key] = z.number().optional(); break;
+      case 'boolean':  shape[key] = z.boolean(); break;
+      case 'boolean?': shape[key] = z.boolean().optional(); break;
+      case 'string[]':  shape[key] = z.array(z.string()); break;
+      case 'string[]?': shape[key] = z.array(z.string()).optional(); break;
+      default: return passthroughArgsSchema;
+    }
+  }
+  return z.object(shape);
+}
+
+// P1 FIX: use Zod schema directly when provided; fall back to legacy string-map conversion.
+// New tools registered with a ZodObject get full enum/default/bounds in MCP metadata.
+function resolveInputSchema(
+  schema: z.ZodObject<Record<string, z.ZodTypeAny>> | Record<string, string>,
+): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  if (schema instanceof z.ZodObject) return schema;
+  return zodFromLegacySchema(schema as Record<string, string>);
+}
+
+for (const tool of getRegisteredTools()) {
+  mcpServer.registerTool(
+    tool.name,
+    {
+      description: tool.description,
+      inputSchema: resolveInputSchema(tool.inputSchema as z.ZodObject<Record<string, z.ZodTypeAny>> | Record<string, string>),
+    },
+    async (args) => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(await invokeTool(tool.name, args as Record<string, unknown>), null, 2),
+        },
+      ],
+    }),
+  );
+}
+
+for (const prompt of getRegisteredPrompts()) {
+  mcpServer.registerPrompt(prompt.name, { description: prompt.description }, async () => ({
+    description: prompt.description,
+    messages: [{ role: 'user', content: { type: 'text', text: prompt.template } }],
+  }));
+}
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+await mcpServer.connect(transport);

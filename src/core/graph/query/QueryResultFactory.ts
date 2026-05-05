@@ -7,6 +7,7 @@ export interface QueryResultBuildInput {
   status: DecisionStatus;
   nodes?: GraphNode[];
   edges?: GraphEdge[];
+  data?: Record<string, unknown>;
   selectedPaths?: ReasoningPath[];
   rejectedPaths?: ReasoningPath[];
   reasons?: string[];
@@ -60,7 +61,7 @@ export class QueryResultFactory {
         rejected_paths: rejectedPaths,
         selection_explanation: reasons,
       },
-      data: { nodes, edges },
+      data: { nodes, edges, ...(input.data ?? {}) },
       confidence: {
         level: confidenceLevel,
         reasons: confidenceReasons,

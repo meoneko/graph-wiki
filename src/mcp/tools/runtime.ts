@@ -1,7 +1,16 @@
-﻿export interface McpToolDefinition {
+﻿import { z } from 'zod';
+
+// inputSchema accepts either:
+//   - a Zod object (preferred — preserves enums, defaults, bounds in MCP metadata)
+//   - a legacy string-map { field: 'string' | 'number?' | ... } (for existing tools)
+export type McpInputSchema =
+  | z.ZodObject<Record<string, z.ZodTypeAny>>
+  | Record<string, string>;
+
+export interface McpToolDefinition {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: McpInputSchema;
   handler: (args: Record<string, unknown>) => Promise<unknown>;
 }
 

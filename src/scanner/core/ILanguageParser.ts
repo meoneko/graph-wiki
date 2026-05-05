@@ -9,6 +9,8 @@ export interface CalledSymbol {
   name: string;
   qualifiedName?: string;
   callSite: { line: number; column: number };
+  receiver?: string;
+  receiverType?: string;
 }
 
 export interface ParameterDef {

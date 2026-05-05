@@ -5,12 +5,14 @@ import type { GraphNode, GraphEdge, OperationType, QueryMode } from '../../types
 describe('Operation-Aware Traversal Policy Acceptance Tests', () => {
     const canonicalNode: GraphNode = {
         id: 'n1', workspace: 'w1', project: 'p1', label: 'N1', type: 'function', graph_kind: 'canonical',
+        roles: [], language: 'typescript',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE',
         provenance: { source: 'parser', artifact_source: 's1', producer_stage: 'extract', timestamp: '2026-01-01' }
     };
 
     const exploratoryNode: GraphNode = {
         id: 'n2', workspace: 'w1', project: 'p1', label: 'N2', type: 'function', graph_kind: 'exploratory',
+        roles: [], language: 'typescript',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY',
         provenance: { source: 'ai', artifact_source: 's2', producer_stage: 'enrich', timestamp: '2026-01-01' }
     };

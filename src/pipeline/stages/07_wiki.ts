@@ -15,7 +15,7 @@ export async function generateWiki(
   const root = path.join(resolveOutputPath(config, 'wiki_root'), workspaceId);
   await mkdir(root, { recursive: true });
 
-  const entrypoints = nodes.filter((n) => n.type.includes('api') || n.type.includes('controller') || n.type.includes('route'));
+  const entrypoints = nodes.filter((n) => (n.roles ?? []).includes('entrypoint'));
   const topDomains = [...new Set(nodes.map((n) => n.domain).filter(Boolean))] as string[];
 
   const trustCounts = {

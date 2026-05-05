@@ -377,7 +377,7 @@ export class TrustAwareQueryEngine {
         return this.graphResult(gaps, [], gaps.length > 0 ? 'PARTIAL' : 'OK', [`mode=${mode}`], gaps.length > 0 ? ['KNOWLEDGE_GAPS_FOUND'] : [], { gapNodeIds: gaps.map((node) => node.id) }, [], { operation, mode });
     }
 
-    async searchNodes(query: string, operation: OperationType, mode: QueryMode, limit = 50): Promise<QueryResult> {
+    async searchNodes(query: string, operation: OperationType, mode: QueryMode, limit = 50, projectId?: string): Promise<QueryResult> {
         if (!operation) return this.emptyResult('POLICY_VIOLATION', ['OPERATION_REQUIRED']);
         let graph: { nodes: GraphNode[]; edges: GraphEdge[] };
         try {
@@ -387,19 +387,39 @@ export class TrustAwareQueryEngine {
         }
         const normalized = query.toLowerCase();
         const matches = graph.nodes
+            .filter((node) => !projectId || node.project === projectId)
             .filter((node) => [
                 node.id,
                 node.label,
                 node.symbol,
                 node.http_path,
                 node.domain,
+                node.language,
+                node.framework,
+                node.project,
+                node.source_file,
+                ...(node.roles ?? []),
             ].some((value) => value?.toLowerCase().includes(normalized)))
             .sort((a, b) => a.id.localeCompare(b.id))
             .slice(0, limit);
-        return this.graphResult(matches, [], matches.length > 0 ? 'OK' : 'INSUFFICIENT_EVIDENCE', [`mode=${mode}`, 'graph string search'], matches.length > 0 ? [] : ['NO_MATCH'], { query, matchCount: matches.length }, [], { operation, mode });
+        return this.graphResult(matches, [], matches.length > 0 ? 'OK' : 'INSUFFICIENT_EVIDENCE', [`mode=${mode}`, 'GRAPH_SEARCH'], matches.length > 0 ? [] : ['NO_MATCH'], {
+            query,
+            projectId,
+            matchCount: matches.length,
+            results: matches.map((node) => ({
+                id: node.id,
+                label: node.label,
+                type: node.type,
+                roles: node.roles ?? [],
+                language: node.language,
+                framework: node.framework,
+                project: node.project,
+                source_file: node.source_file,
+            })),
+        }, [], { operation, mode });
     }
 
-    async findCallers(symbol: string, operation: OperationType, mode: QueryMode): Promise<QueryResult> {
+    async findCallers(symbol: string | undefined, operation: OperationType, mode: QueryMode, nodeId?: string): Promise<QueryResult> {
         if (!operation) return this.emptyResult('POLICY_VIOLATION', ['OPERATION_REQUIRED']);
         let artifacts: LoadedGraphArtifacts;
         try {
@@ -409,9 +429,11 @@ export class TrustAwareQueryEngine {
         }
         const nodesById = artifacts.index.nodeById;
         const targetIds = new Set(
-            Object.values(nodesById)
-                .filter((node) => (node.label === symbol || node.symbol === symbol) && EdgePolicyTable.isNodeVisible(node, { operation, mode }))
-                .map((node) => node.id)
+            nodeId
+                ? (nodesById[nodeId] && EdgePolicyTable.isNodeVisible(nodesById[nodeId], { operation, mode }) ? [nodeId] : [])
+                : Object.values(nodesById)
+                    .filter((node) => (node.label === symbol || node.symbol === symbol) && EdgePolicyTable.isNodeVisible(node, { operation, mode }))
+                    .map((node) => node.id)
         );
 
         const callers: Array<{ caller: GraphNode; via_edge: GraphEdge }> = [];
@@ -582,11 +604,8 @@ export class TrustAwareQueryEngine {
     }
 
     private isEntrypoint(node: GraphNode): boolean {
-        const type = node.type.toLowerCase();
         return Boolean(node.metadata?.is_entrypoint)
-            || type.includes('api')
-            || type.includes('route')
-            || type.includes('controller')
+            || (node.roles ?? []).includes('entrypoint')
             || Boolean(node.http_method || node.http_path);
     }
 

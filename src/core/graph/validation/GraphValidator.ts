@@ -24,13 +24,39 @@ const VALID_CONFIDENCE_BANDS = new Set(['AUTHORITATIVE', 'EXTRACTED', 'INFERRED'
 
 const CANONICAL_AUTHORITATIVE_SOURCES = new Set(['parser']);
 
-const FE_FRAGMENTS = ['ui_component', 'frontend', 'page', 'view', 'component'];
-const DB_FRAGMENTS = ['repository', 'database', 'db_table', 'db_service'];
-const ROUTE_FRAGMENTS = ['route', 'api_route', 'controller', 'api_controller'];
+const FE_ROLES = new Set(['ui_component', 'frontend', 'page', 'view', 'component']);
+const DB_ROLES = new Set(['repository', 'database', 'db_table', 'db_service']);
+const SERVICE_ROLES = new Set(['service', 'usecase', 'domain']);
 const AUTHORITY_EDGE_TYPES = new Set(['uses_authority', 'node_uses_authority', 'depends_on_authority']);
 
-function matchesAny(nodeType: string, fragments: string[]): boolean {
-  return fragments.some((f) => nodeType.includes(f));
+function semanticRole(node: GraphNode): string {
+  return String(
+    node.lang_meta?.semantic_role
+      ?? node.metadata?.semantic_role
+      ?? node.metadata?.role
+      ?? '',
+  ).toLowerCase();
+}
+
+function hasSemanticRole(node: GraphNode, roles: Set<string>): boolean {
+  const role = semanticRole(node);
+  return roles.has(role) || [...roles].some((fragment) => role.includes(fragment));
+}
+
+function isFrontendNode(node: GraphNode): boolean {
+  return hasSemanticRole(node, FE_ROLES);
+}
+
+function isDatabaseNode(node: GraphNode): boolean {
+  return hasSemanticRole(node, DB_ROLES);
+}
+
+function isRouteNode(node: GraphNode): boolean {
+  return (node.roles ?? []).includes('http_handler') || (node.roles ?? []).includes('entrypoint');
+}
+
+function isServiceNode(node: GraphNode): boolean {
+  return hasSemanticRole(node, SERVICE_ROLES);
 }
 
 export class GraphValidator {
@@ -82,6 +108,22 @@ export class GraphValidator {
           severity: 'error',
           nodeId: node.id,
           detail: `Node ${node.id ?? 'unknown'} is missing required field type`,
+        });
+      }
+      if (!Array.isArray(node.roles)) {
+        issues.push({
+          code: 'INVALID_GRAPH_STATE',
+          severity: 'error',
+          nodeId: node.id,
+          detail: `Node ${node.id ?? 'unknown'} has invalid or missing roles`,
+        });
+      }
+      if (!node.language) {
+        issues.push({
+          code: 'INVALID_GRAPH_STATE',
+          severity: 'error',
+          nodeId: node.id,
+          detail: `Node ${node.id ?? 'unknown'} is missing required field language`,
         });
       }
       if (!node.label) {
@@ -286,36 +328,36 @@ export class GraphValidator {
       if (!from || !to) continue;
 
       // FE → DB direct call
-      if (matchesAny(from.type, FE_FRAGMENTS) && matchesAny(to.type, DB_FRAGMENTS)) {
+      if (isFrontendNode(from) && isDatabaseNode(to)) {
         issues.push({
           code: 'FORBIDDEN_FE_DB_DIRECT',
           severity: 'error',
           edgeId: edge.id,
-          detail: `Frontend node '${from.id}' (${from.type}) directly calls DB node '${to.id}' (${to.type})`,
+          detail: `Frontend node '${from.id}' directly calls DB node '${to.id}'`,
         });
       }
 
       // Route/controller → DB direct (bypasses usecase)
-      if (matchesAny(from.type, ROUTE_FRAGMENTS) && matchesAny(to.type, DB_FRAGMENTS)) {
+      if (isRouteNode(from) && isDatabaseNode(to)) {
         issues.push({
           code: 'FORBIDDEN_ROUTE_BYPASS_USECASE',
           severity: 'error',
           edgeId: edge.id,
-          detail: `Route/controller '${from.id}' (${from.type}) calls DB node '${to.id}' (${to.type}) without usecase layer`,
+          detail: `Route/controller '${from.id}' calls DB node '${to.id}' without usecase layer`,
         });
       }
 
       // Service writes state without authority edge
       if (
-        from.type.includes('service') &&
-        matchesAny(to.type, DB_FRAGMENTS) &&
+        isServiceNode(from) &&
+        isDatabaseNode(to) &&
         !hasCanonicalAuthorityEdge.has(from.id)
       ) {
         issues.push({
           code: 'SERVICE_WRITE_WITHOUT_AUTHORITY',
           severity: 'error',
           edgeId: edge.id,
-          detail: `Service '${from.id}' (${from.type}) writes to '${to.id}' (${to.type}) without any authority edge`,
+          detail: `Service '${from.id}' writes to '${to.id}' without any authority edge`,
         });
       }
     }

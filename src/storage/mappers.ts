@@ -4,6 +4,7 @@ import {
     GraphNode,
     GraphEdge,
     Provenance,
+    type NodeRole,
 } from '../core/types.js';
 
 export function mapConfidenceToBand(confidence: string | undefined): ConfidenceBand {
@@ -45,8 +46,13 @@ function mapGraphKind(kind: string | undefined): GraphKind {
 }
 
 export function mapNodeFromDB(raw: any): GraphNode {
+    const { roles: rawRoles, framework: rawFramework, language: rawLanguage, lang_meta: rawLangMeta, ...rest } = raw;
     return {
-        ...raw,
+        ...rest,
+        roles: rawRoles ? JSON.parse(rawRoles) as NodeRole[] : [],
+        language: rawLanguage ?? 'unknown',
+        framework: rawFramework ?? undefined,
+        lang_meta: rawLangMeta ? JSON.parse(rawLangMeta) : undefined,
         graph_kind: mapGraphKind(raw.graph_kind),
         confidence_band: mapConfidenceToBand(raw.confidence),
         provenance: mapProvenance(raw.provenance ? JSON.parse(raw.provenance) : null),
@@ -70,6 +76,9 @@ export function mapNodeToDB(node: GraphNode): any {
     const { confidence_band, provenance, metadata, ...rest } = node;
     return {
         ...rest,
+        roles: JSON.stringify(node.roles ?? []),
+        language: node.language ?? 'unknown',
+        framework: node.framework ?? null,
         confidence: mapBandToConfidence(confidence_band),
         provenance: JSON.stringify(provenance),
         metadata: JSON.stringify(metadata || {}),

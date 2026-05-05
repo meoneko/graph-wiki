@@ -1,4 +1,3 @@
-﻿import { z } from 'zod';
 import { getDiff, parseDiff } from '../../pipeline/gitDiff.js';
 import { buildImpactReport } from '../../pipeline/impactReport.js';
 import { getDB } from '../../storage/GraphDB.js';
@@ -7,52 +6,53 @@ import { registerTool } from './runtime.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
-
-const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
+import {
+  GetBlastRadiusInput,
+  GetRiskScoreInput,
+  ReviewDiffInput,
+  ReviewPrInput,
+} from '../schemas/index.js';
 
 export function registerReviewTools(): void {
   registerTool({
     name: 'review_diff',
     description: 'Review a raw diff text with trust boundary',
-    inputSchema: { diffText: 'string', workspaceId: 'string', mode: 'string?' },
+    inputSchema: ReviewDiffInput,
     handler: async (args) => {
-      const input = z.object({
-        diffText: z.string(),
-        workspaceId: z.string(),
-        mode: QueryModeSchema
-      }).parse(args);
+      const input = ReviewDiffInput.parse(args);
       const diff = await parseDiff(input.diffText);
-      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode);
+      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode, 'review');
+    },
+  });
+
+  registerTool({
+    name: 'detect_changes',
+    description: 'Risk-scored change analysis for a raw diff with affected nodes',
+    inputSchema: ReviewDiffInput,
+    handler: async (args) => {
+      const input = ReviewDiffInput.parse(args);
+      const diff = await parseDiff(input.diffText);
+      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode, 'impact');
     },
   });
 
   registerTool({
     name: 'review_pr',
     description: 'Review impact by git range with trust boundary',
-    inputSchema: { base: 'string', head: 'string', workspaceId: 'string', repoPath: 'string?', mode: 'string?' },
+    inputSchema: ReviewPrInput,
     handler: async (args) => {
-      const input = z.object({
-        base: z.string(),
-        head: z.string(),
-        workspaceId: z.string(),
-        repoPath: z.string().optional(),
-        mode: QueryModeSchema
-      }).parse(args);
+      const input = ReviewPrInput.parse(args);
       const diff = await getDiff(input.repoPath ?? process.cwd(), input.base, input.head);
-      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode);
+      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode, 'review');
     },
   });
 
   registerTool({
     name: 'blast_radius',
     description: 'Get trust-aware blast radius from node',
-    inputSchema: { nodeId: 'string', workspaceId: 'string', mode: 'string?' },
+    inputSchema: GetBlastRadiusInput,
     handler: async (args) => {
-      const input = z.object({
-        nodeId: z.string(),
-        workspaceId: z.string(),
-        mode: QueryModeSchema
-      }).parse(args);
+      const input = GetBlastRadiusInput.parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
       const operation = OperationResolver.resolve({ caller: 'mcp.review.blast_radius' });
       return engine.getBlastRadiusIds(input.nodeId, operation, input.mode as QueryMode);
@@ -62,13 +62,9 @@ export function registerReviewTools(): void {
   registerTool({
     name: 'get_risk_score',
     description: 'Compute risk score for node set within trust boundary',
-    inputSchema: { nodeIds: 'string[]', workspaceId: 'string', mode: 'string?' },
+    inputSchema: GetRiskScoreInput,
     handler: async (args) => {
-      const input = z.object({
-        nodeIds: z.array(z.string()),
-        workspaceId: z.string(),
-        mode: QueryModeSchema
-      }).parse(args);
+      const input = GetRiskScoreInput.parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
       const operation = OperationResolver.resolve({ caller: 'mcp.review.get_risk_score' });
       return engine.getRiskScore(input.nodeIds, operation, input.mode as QueryMode);
