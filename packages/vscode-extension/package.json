@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "code-review-graph-vscode-extension",
   "displayName": "Code Review Graph",
   "description": "VS Code integration for local code-review-graph",
@@ -10,14 +10,123 @@
   "categories": [
     "Other"
   ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/code-review-graph.git"
+  },
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Code Review Graph",
+      "properties": {
+        "crg.serverPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to the built Code Review Graph CLI JavaScript file, for example D:/projects/viet/code-review-graph/dist/cli/index.js."
+        },
+        "crg.serverCwd": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional working directory for the CRG MCP server. Leave empty to auto-detect from crg.serverPath."
+        },
+        "crg.workspaceId": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Code Review Graph workspace id. If empty, the extension reads knowledge.config.yaml and uses the only workspace or asks you to choose."
+        },
+        "crg.projectId": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Optional project id filter for graph views and file analysis."
+        },
+        "crg.maxItems": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 500,
+          "scope": "resource",
+          "description": "Maximum items to request or render in CRG views."
+        }
+      }
+    },
     "commands": [
       {
         "command": "crg.showBlastRadius",
-        "title": "CRG: Show Blast Radius for Current File"
+        "title": "CRG: Show Blast Radius",
+        "icon": "$(radio-tower)"
+      },
+      {
+        "command": "crg.rebuildGraph",
+        "title": "CRG: Rebuild Graph",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "crg.showStats",
+        "title": "CRG: Show Graph Stats",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "crg.analyzeChanges",
+        "title": "CRG: Analyze Changes Risk",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "crg.openSetup",
+        "title": "CRG: Open Setup",
+        "icon": "$(settings-gear)"
       }
-    ]
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "crg.analyzeChanges",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "crg.showBlastRadius",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "crg.showBlastRadius",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "crg-explorer",
+          "title": "Code Review Graph",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "crg-explorer": [
+        {
+          "id": "crg.views.flows",
+          "name": "Execution Flows",
+          "icon": "$(zap)"
+        },
+        {
+          "id": "crg.views.communities",
+          "name": "Code Communities",
+          "icon": "$(organization)"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
@@ -26,5 +135,10 @@
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vscode/webview-ui-toolkit": "^1.4.0",
+    "yaml": "^2.8.4"
   }
 }

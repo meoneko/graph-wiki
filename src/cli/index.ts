@@ -126,7 +126,8 @@ async function main(): Promise<void> {
   }
 
   if (command === 'serve-mcp') {
-    await import('../mcp/server.js');
+    const { startMcpServer } = await import('../mcp/server.js');
+    await startMcpServer();
     return;
   }
 

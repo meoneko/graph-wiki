@@ -1,6 +1,9 @@
 import type { GraphNode } from '../../core/types.js';
 import type { GraphDB } from '../../storage/GraphDB.js';
-export { fileMatchesGraphPath, normalizePathForMatch as normalizeGraphPath } from '../../core/utils/pathMatch.js';
+import { fileMatchesGraphPath, normalizePathForMatch } from '../../core/utils/pathMatch.js';
+
+export { fileMatchesGraphPath };
+export const normalizeGraphPath = normalizePathForMatch;
 
 export function nodeSummary(node: GraphNode): {
   id: string;

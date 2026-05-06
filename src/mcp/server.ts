@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -16,9 +18,11 @@ export const mcpServer = new McpServer(
 
 export function notifyGraphUpdated(): void {
   try {
-    mcpServer.server.notification({
+    void mcpServer.server.notification({
       method: 'notifications/resources/updated',
       params: { uri: 'crg://graph/data' },
+    }).catch(() => {
+      // Ignore if no clients connected or transport not ready
     });
   } catch (err) {
     // Ignore if no clients connected or transport not ready
@@ -79,5 +83,15 @@ for (const prompt of getRegisteredPrompts()) {
   }));
 }
 
-const transport = new StdioServerTransport();
-await mcpServer.connect(transport);
+export async function startMcpServer(): Promise<void> {
+  const transport = new StdioServerTransport();
+  await mcpServer.connect(transport);
+}
+
+const isDirectRun = process.argv[1]
+  ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  : false;
+
+if (isDirectRun) {
+  await startMcpServer();
+}

@@ -6,8 +6,10 @@ import { registerGraphTools } from './graph.js';
 import { registerWikiTools } from './wiki.js';
 import { registerRefactorTools } from './refactor.js';
 import { registerPostprocessTools } from './postprocess.js';
+import { registerWorkspaceTools } from './workspaces.js';
 
 export function registerAllTools(): void {
+  registerWorkspaceTools();
   registerBuildTools();
   registerQueryTools();
   registerSearchTools();
