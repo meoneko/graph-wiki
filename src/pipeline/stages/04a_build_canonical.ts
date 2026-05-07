@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { GraphEdge, GraphNode, NormalizedFact, Provenance } from '../../core/types.js';
 import { GraphDB } from '../../storage/GraphDB.js';
 import { buildNodeBySymbol, callMetadata, GraphNodeIndex, resolveCalledSymbol } from './graphResolution.js';
+import { globalAdapterRegistry } from '../adapters/index.js';
 
 function sid(...parts: string[]): string {
     return createHash('sha1').update(parts.join('|')).digest('hex');
@@ -20,7 +21,8 @@ function mapProvenance(fact: NormalizedFact, stage: string): Provenance {
 }
 
 function isSupportedCodeFile(file: string): boolean {
-    return /\.(cs|ts|tsx|js|jsx)$/i.test(file) && !/\.md$/i.test(file);
+    // Intentionally uses adapter registration side effects from adapters/index.js.
+    return globalAdapterRegistry.all().some((registration) => registration.pattern.test(file));
 }
 
 function isAuthoritativeCanonicalFact(fact: NormalizedFact): boolean {

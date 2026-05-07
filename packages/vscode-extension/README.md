@@ -22,6 +22,9 @@ Extension này giúp lập trình viên trực quan hóa sự phụ thuộc củ
    - Tích hợp biểu tượng CRG riêng biệt bên thanh Activity Bar bên trái.
    - **Execution Flows**: Danh sách các luồng thực thi quan trọng của hệ thống (ví dụ: Create Order, Process Payment).
    - **Code Communities**: Danh sách các cụm file có tính gắn kết (cohesion) cao trong dự án.
+   - **Manual Wiki Controls**: Các nút điều khiển mới trên header của sidebar:
+     - 🔄 **Rescan (Incremental)**: Cập nhật nhanh đồ thị từ các thay đổi code.
+     - ⚡ **Post-Process**: Chạy lại pipeline để cập nhật flows và communities.
 
 4. **Quản lý Trạng thái Đồ thị (Graph Status)**
    - Theo dõi trạng thái của Graph (`Ready`, `Building`) ngay dưới thanh Status Bar.

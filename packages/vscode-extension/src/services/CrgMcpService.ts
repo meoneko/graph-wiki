@@ -86,11 +86,11 @@ export class CrgMcpService implements vscode.Disposable {
     });
   }
 
-  async buildGraph(): Promise<QueryResult> {
+  async buildGraph(incremental = false): Promise<QueryResult> {
     const context = await this.getContext();
     return this.callTool('build_graph', {
       workspaceId: context.workspaceId,
-      incremental: false,
+      incremental,
     });
   }
 

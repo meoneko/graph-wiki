@@ -4,6 +4,17 @@ Local-first codebase intelligence graph for code review and impact analysis.
 
 Parses your codebase into a SQLite knowledge graph, then exposes it via a CLI, an MCP server (for Claude), and a VS Code extension. Key use case: given a git diff or PR, instantly know which nodes (endpoints, use cases, DTOs) are affected and what the blast radius looks like.
 
+### Execution Flows & Communities
+
+The extension provides specialized views for:
+*   **Execution Flows**: Trace how requests flow through the system.
+*   **Code Communities**: Discover logical clusters of related code.
+
+#### Wiki Control Buttons
+New controls are available in the view headers:
+*   **Rescan (Incremental)**: Update graph from code changes.
+*   **Post-Process**: Re-calculate flows and communities.
+
 ---
 
 ## Features
@@ -160,10 +171,11 @@ knowledge.config.yaml
 
 ## Supported Languages
 
-| Language | Adapter | Extracts |
+| Language | Implementation | Extracts |
 |---|---|---|
-| C# | `CSharpAdapter` + tree-sitter | Controller actions, Minimal API routes, Use cases, DTOs, Interfaces, Classes, Partial classes, Extension methods, Top-level statements |
-| TypeScript / React | `TSReactAdapter` | Routes, API calls (fetch/axios) |
+| **C#** | `CSharpParser` (Tree-Sitter) | Deep AST extraction: Controllers, Minimal APIs, Use Cases, DTOs, Classes, Partial classes, Extension methods, etc. |
+| **TypeScript / React** | `TSReactAdapter` (Regex) | Pattern-based extraction: Frontend routes, API calls (fetch/axios). |
+| **JavaScript / JSX** | `TSReactAdapter` (Regex) | Pattern-based extraction: Frontend routes, API calls. |
 
 ---
 
