@@ -1,4 +1,4 @@
-﻿import Parser from 'tree-sitter';
+import type Parser from 'web-tree-sitter';
 
 export type SymbolKind =
   | 'function' | 'method' | 'class' | 'interface'
@@ -28,6 +28,48 @@ export interface ParseError {
   node?: Parser.SyntaxNode;
 }
 
+export type ParseMode = 'full' | 'partial' | 'fallback' | 'skipped';
+
+export interface SourceFileSnapshot {
+  filePath: string;
+  rawBuffer: Buffer;
+  content: string;
+  encoding: 'utf8' | 'utf16le' | 'utf16be' | 'unknown';
+  hash: string;
+  sizeBytes: number;
+  lineCount: number;
+}
+
+export interface ParseBudget {
+  maxFileSizeBytesForFullParse: number;
+  maxSymbolsPerFile: number;
+  maxCallRefsPerFile: number;
+  maxExcerptChars: number;
+}
+
+export const DEFAULT_PARSE_BUDGET: ParseBudget = {
+  maxFileSizeBytesForFullParse: 2_000_000,
+  maxSymbolsPerFile: 20_000,
+  maxCallRefsPerFile: 100_000,
+  maxExcerptChars: 4_000,
+};
+
+export interface ParseMetrics {
+  sizeBytes: number;
+  lineCount: number;
+  symbolCount: number;
+  callRefCount: number;
+  totalNodeCount?: number;
+  errorNodeCount: number;
+  truncated: boolean;
+  reasonCodes: string[];
+}
+
+export interface ParseFallbackContext {
+  budget: ParseBudget;
+  snapshot?: SourceFileSnapshot;
+}
+
 export interface ParsedSymbol {
   name: string;
   qualifiedName: string;
@@ -52,10 +94,18 @@ export interface ParsedFile {
   symbols: ParsedSymbol[];
   imports: ImportDecl[];
   errors: ParseError[];
+  parseMode?: ParseMode;
+  metrics?: ParseMetrics;
+}
+
+export interface AdapterParsedResult {
+  paths?: string[];
+  files: ParsedFile[];
 }
 
 export interface ILanguageParser {
   readonly language: string;
   readonly fileExtensions: string[];
   parse(sourceCode: string, filePath: string): ParsedFile;
+  parseFallback?(sourceCode: string, filePath: string, context: ParseFallbackContext): ParsedFile;
 }

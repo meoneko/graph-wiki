@@ -250,6 +250,7 @@ export function registerPostprocessTools(): void {
             ? 'AFFECTED_FLOWS_FOUND'
             : 'NO_FLOWS_TOUCH_INPUTS',
         ],
+        codes: affected.length > 0 ? [] : ['NO_FLOWS_TOUCH_INPUTS'],
         data: {
           inputs: { changedFiles: input.changedFiles, nodeIds: input.nodeIds },
           matchedNodes: [...matchedNodeMap.values()].map((node) => ({
@@ -270,9 +271,9 @@ export function registerPostprocessTools(): void {
         },
         metadata: {
           tool: { name: 'get_affected_flows', workspace: input.workspaceId },
-          nextTools: [
-            { name: 'get_flow', reason: 'affected_flows_available' },
-          ],
+          nextTools: affected.length > 0
+            ? [{ name: 'get_flow', reason: 'affected_flows_available' }]
+            : [{ name: 'get_callees', reason: 'matched_nodes_have_no_flow_membership' }],
         },
       });
     },

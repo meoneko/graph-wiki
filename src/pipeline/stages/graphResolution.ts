@@ -18,6 +18,32 @@ function containingClassOf(node: GraphNode): string | undefined {
   return asString(langMeta?.containingClass) ?? asString(langMeta?.containing_class);
 }
 
+function declaringTypeFullNameOf(node: GraphNode): string | undefined {
+  const metadata = node.metadata ?? {};
+  const langMeta = metadata.lang_meta && typeof metadata.lang_meta === 'object'
+    ? metadata.lang_meta as Record<string, unknown>
+    : node.lang_meta;
+  return asString(langMeta?.declaringTypeFullName) ?? asString(langMeta?.declaring_type_full_name);
+}
+
+function namespaceOf(node: GraphNode): string | undefined {
+  const metadata = node.metadata ?? {};
+  const langMeta = metadata.lang_meta && typeof metadata.lang_meta === 'object'
+    ? metadata.lang_meta as Record<string, unknown>
+    : node.lang_meta;
+  return asString(langMeta?.namespace);
+}
+
+function callerNamespaceAndClass(containingClass: string | undefined): { namespace?: string; className?: string } {
+  if (!containingClass) return {};
+  const parts = containingClass.split('.');
+  const className = parts.at(-1);
+  return {
+    namespace: parts.length > 1 ? parts.slice(0, -1).join('.') : undefined,
+    className,
+  };
+}
+
 function symbolForms(node: GraphNode): string[] {
   const forms = new Set<string>();
   const symbol = node.symbol;
@@ -53,6 +79,34 @@ function concrete(nodes: GraphNode[]): GraphNode[] {
   return nodes.filter((node) => !node.type.toLowerCase().includes('interface'));
 }
 
+function firstDeterministic(nodes: GraphNode[]): GraphNode | undefined {
+  return [...nodes].sort((a, b) => {
+    const fileCompare = (a.source_file ?? '').localeCompare(b.source_file ?? '');
+    if (fileCompare !== 0) return fileCompare;
+    return a.id.localeCompare(b.id);
+  })[0];
+}
+
+function resolveScopedOverload(candidates: GraphNode[], callRef: CalledSymbolRef): GraphNode | undefined {
+  const concreteCandidates = concrete(uniqueById(candidates));
+  if (concreteCandidates.length <= 1) return concreteCandidates[0];
+
+  // C# overloads share the same method name within the same declaring type.
+  // The extractor does not capture argument types yet, so keeping one edge is
+  // more useful for graph analysis than dropping all overloads as ambiguous.
+  const scopes = new Set(concreteCandidates.map((node) => declaringTypeFullNameOf(node) ?? containingClassOf(node) ?? node.source_file ?? ''));
+  const sameFile = new Set(concreteCandidates.map((node) => node.source_file ?? ''));
+  const callerScope = callRef.containingClass;
+  const callerClass = callerNamespaceAndClass(callerScope).className;
+  if (scopes.size === 1 && (!callerScope || scopes.has(callerScope) || (callerClass ? scopes.has(callerClass) : false))) {
+    return firstDeterministic(concreteCandidates);
+  }
+  if (sameFile.size === 1 && concreteCandidates.every((node) => hasSymbolForm(node, callRef.name))) {
+    return firstDeterministic(concreteCandidates);
+  }
+  return undefined;
+}
+
 function hasSymbolForm(node: GraphNode, wanted: string): boolean {
   const wantedLeaf = leaf(wanted);
   return symbolForms(node).some((form) => form === wanted || (wantedLeaf ? form === wantedLeaf : false));
@@ -63,16 +117,21 @@ export class GraphNodeIndex {
   private readonly byForm = new Map<string, GraphNode[]>();
   private readonly byFileAndForm = new Map<string, GraphNode[]>();
   private readonly byClassAndForm = new Map<string, GraphNode[]>();
+  private readonly byDeclaringTypeAndForm = new Map<string, GraphNode[]>();
+  private readonly byNamespaceClassAndForm = new Map<string, GraphNode[]>();
 
   constructor(nodes: GraphNode[]) {
     for (const node of nodes) {
-      const nodeForms = symbolForms(node);
       const containingClass = containingClassOf(node);
+      const declaringTypeFullName = declaringTypeFullNameOf(node);
+      const namespace = namespaceOf(node);
       for (const form of symbolForms(node)) {
         this.forms.add(form);
         this.add(this.byForm, form, node);
         if (node.source_file) this.add(this.byFileAndForm, `${node.source_file}\0${form}`, node);
         if (containingClass) this.add(this.byClassAndForm, `${containingClass}\0${form}`, node);
+        if (declaringTypeFullName) this.add(this.byDeclaringTypeAndForm, `${declaringTypeFullName}\0${form}`, node);
+        if (namespace && containingClass) this.add(this.byNamespaceClassAndForm, `${namespace}.${containingClass}\0${form}`, node);
       }
     }
   }
@@ -120,6 +179,24 @@ export class GraphNodeIndex {
     return uniqueById(out);
   }
 
+  findByDeclaringTypeAndForm(declaringTypeFullName: string | undefined, name: string): GraphNode[] {
+    if (!declaringTypeFullName) return [];
+    const out: GraphNode[] = [];
+    for (const form of this.lookupForms(name)) {
+      out.push(...(this.byDeclaringTypeAndForm.get(`${declaringTypeFullName}\0${form}`) ?? []));
+    }
+    return uniqueById(out);
+  }
+
+  findByNamespaceClassAndForm(namespace: string | undefined, className: string | undefined, name: string): GraphNode[] {
+    if (!namespace || !className) return [];
+    const out: GraphNode[] = [];
+    for (const form of this.lookupForms(name)) {
+      out.push(...(this.byNamespaceClassAndForm.get(`${namespace}.${className}\0${form}`) ?? []));
+    }
+    return uniqueById(out);
+  }
+
   private lookupForms(name: string): string[] {
     const forms = new Set<string>([name]);
     const nameLeaf = leaf(name);
@@ -152,12 +229,19 @@ export function resolveCalledSymbol(
     if (exact) return exact;
   }
 
+  const sameDeclaringType = nodeIndex.findByDeclaringTypeAndForm(callRef.containingClass, name);
+  if (sameDeclaringType.length === 1) return sameDeclaringType[0];
+  const declaringTypeOverload = resolveScopedOverload(sameDeclaringType, callRef);
+  if (declaringTypeOverload) return declaringTypeOverload;
+
   const sameFile = nodeIndex.findByFileAndForm(callRef.source_file, name);
   const sameClass = callRef.containingClass
     ? nodeIndex.findByClassAndForm(callRef.containingClass, name)
     : [];
   const scoped = uniqueById([...sameClass, ...sameFile]);
   if (scoped.length === 1) return scoped[0];
+  const scopedOverload = resolveScopedOverload(scoped, callRef);
+  if (scopedOverload) return scopedOverload;
 
   const dotIdx = name.indexOf('.');
   if (dotIdx > 0) {
@@ -170,8 +254,16 @@ export function resolveCalledSymbol(
   const receiverClass = callRef.receiverType ?? callRef.receiver;
   if (receiverClass && !['this', 'self', 'base'].includes(receiverClass)) {
     const receiverLeaf = leaf(receiverClass) ?? receiverClass;
+    const callerNamespace = callerNamespaceAndClass(callRef.containingClass).namespace;
+    const byNamespaceReceiver = concrete(nodeIndex.findByNamespaceClassAndForm(callerNamespace, receiverLeaf, name));
+    if (byNamespaceReceiver.length === 1) return byNamespaceReceiver[0];
+    const namespaceReceiverOverload = resolveScopedOverload(byNamespaceReceiver, callRef);
+    if (namespaceReceiverOverload) return namespaceReceiverOverload;
+
     const byReceiver = concrete(nodeIndex.findByClassAndForm(receiverLeaf, name));
     if (byReceiver.length === 1) return byReceiver[0];
+    const receiverOverload = resolveScopedOverload(byReceiver, callRef);
+    if (receiverOverload) return receiverOverload;
   }
 
   const fallback = concrete(nodeIndex.findByForm(name));

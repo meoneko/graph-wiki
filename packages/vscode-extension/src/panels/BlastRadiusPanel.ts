@@ -2,27 +2,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { CrgMcpService } from '../services/CrgMcpService';
-import { resultErrorSummary } from '../services/CrgMcpService';
+import { BlastRadiusService } from './BlastRadiusService';
+import { renderBlastRadiusWebview } from './blastRadiusWebview';
 
-interface AffectedFlow {
-  id: number;
-  name: string;
-  criticality: number;
-  nodeCount: number;
-  matchedNodeCount: number;
-  projects?: string[];
-}
-
-interface MatchedNode {
-  id: string;
-  label: string;
-  project: string;
-  source_file?: string;
-}
+type WebviewMessage =
+  | { command: 'openFile'; file?: string }
+  | { command: 'traceNode'; nodeId?: string }
+  | { command: 'refreshBlastRadius'; targetFile?: string }
+  | { command: 'openSetup' }
+  | { command: 'rebuildGraph' }
+  | { command: 'runPostprocess' };
 
 export class BlastRadiusPanel {
   public static currentPanel: BlastRadiusPanel | undefined;
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly blastRadiusService: BlastRadiusService;
+  private targetFile: string;
 
   static render(extensionUri: vscode.Uri, targetFile: string, service: CrgMcpService): void {
     if (BlastRadiusPanel.currentPanel) {
@@ -46,46 +41,29 @@ export class BlastRadiusPanel {
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly service: CrgMcpService,
+    service: CrgMcpService,
     targetFile: string,
   ) {
+    this.targetFile = targetFile;
+    this.blastRadiusService = new BlastRadiusService(service);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.panel.webview.html = this.getWebviewContent(this.panel.webview);
-    this.panel.webview.onDidReceiveMessage((message) => {
-      if (message?.command === 'openFile' && typeof message.file === 'string') {
-        void this.openFile(message.file);
-      }
+    this.panel.webview.html = renderBlastRadiusWebview(this.panel.webview);
+    this.panel.webview.onDidReceiveMessage((message: WebviewMessage) => {
+      void this.handleMessage(message);
     }, null, this.disposables);
     void this.updateTarget(targetFile);
   }
 
   async updateTarget(targetFile: string): Promise<void> {
+    this.targetFile = targetFile;
     this.panel.title = `Blast Radius: ${path.basename(targetFile)}`;
-    await this.panel.webview.postMessage({ command: 'setLoading', isLoading: true, targetFile });
+    await this.panel.webview.postMessage({ command: 'setLoading', targetFile });
 
     try {
-      const context = await this.service.getContext();
-      const result = await this.service.callTool('get_affected_flows', {
-        workspaceId: context.workspaceId,
-        projectId: context.projectId,
-        changedFiles: [targetFile],
-      });
-      if (result.status !== 'OK' && result.status !== 'PARTIAL') {
-        await this.panel.webview.postMessage({
-          command: 'renderError',
-          message: resultErrorSummary(result),
-        });
-        return;
-      }
-
+      const viewModel = await this.blastRadiusService.getBlastRadius(targetFile);
       await this.panel.webview.postMessage({
-        command: 'renderGraph',
-        data: {
-          targetFile,
-          matchedNodes: (result.data?.matchedNodes ?? []) as MatchedNode[],
-          flows: (result.data?.flows ?? []) as AffectedFlow[],
-          unmatchedInputs: result.data?.unmatchedInputs ?? [],
-        },
+        command: 'renderBlastRadius',
+        data: viewModel,
       });
     } catch (error) {
       await this.panel.webview.postMessage({
@@ -99,6 +77,91 @@ export class BlastRadiusPanel {
     BlastRadiusPanel.currentPanel = undefined;
     while (this.disposables.length) {
       this.disposables.pop()?.dispose();
+    }
+  }
+
+  private async handleMessage(message: WebviewMessage): Promise<void> {
+    if (message.command === 'openFile' && typeof message.file === 'string') {
+      await this.openFile(message.file);
+      return;
+    }
+    if (message.command === 'refreshBlastRadius') {
+      await this.updateTarget(message.targetFile || this.targetFile);
+      return;
+    }
+    if (message.command === 'traceNode' && typeof message.nodeId === 'string') {
+      await this.traceNode(message.nodeId);
+      return;
+    }
+    if (message.command === 'openSetup') {
+      await vscode.commands.executeCommand('crg.openSetup');
+      return;
+    }
+    if (message.command === 'rebuildGraph') {
+      await this.rebuildGraph();
+      return;
+    }
+    if (message.command === 'runPostprocess') {
+      await this.runPostprocess();
+    }
+  }
+
+  private async traceNode(nodeId: string): Promise<void> {
+    try {
+      const trace = await this.blastRadiusService.traceNode(nodeId);
+      await this.panel.webview.postMessage({
+        command: 'renderTrace',
+        data: trace,
+      });
+    } catch (error) {
+      await this.panel.webview.postMessage({
+        command: 'renderError',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async rebuildGraph(): Promise<void> {
+    await this.panel.webview.postMessage({
+      command: 'setLoading',
+      targetFile: this.targetFile,
+      message: 'Rebuilding graph...',
+    });
+    try {
+      const result = await this.blastRadiusService.rebuildGraph();
+      if (result.status !== 'OK' && result.status !== 'PARTIAL') {
+        throw new Error(`Build graph failed: ${result.codes?.[0] ?? result.status}`);
+      }
+      const postprocess = await this.blastRadiusService.runPostprocess();
+      if (postprocess.status !== 'OK' && postprocess.status !== 'PARTIAL') {
+        throw new Error(`Postprocess failed: ${postprocess.codes?.[0] ?? postprocess.status}`);
+      }
+      await this.updateTarget(this.targetFile);
+    } catch (error) {
+      await this.panel.webview.postMessage({
+        command: 'renderError',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async runPostprocess(): Promise<void> {
+    await this.panel.webview.postMessage({
+      command: 'setLoading',
+      targetFile: this.targetFile,
+      message: 'Running postprocess...',
+    });
+    try {
+      const result = await this.blastRadiusService.runPostprocess();
+      if (result.status !== 'OK' && result.status !== 'PARTIAL') {
+        throw new Error(`Postprocess failed: ${result.codes?.[0] ?? result.status}`);
+      }
+      await this.updateTarget(this.targetFile);
+    } catch (error) {
+      await this.panel.webview.postMessage({
+        command: 'renderError',
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -119,138 +182,4 @@ export class BlastRadiusPanel {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(normalized));
     await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
   }
-
-  private getWebviewContent(webview: vscode.Webview): string {
-    const nonce = getNonce();
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-  <title>CRG Blast Radius</title>
-  <style>
-    body { margin: 0; padding: 18px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-    #loading, #error { display: none; padding: 16px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
-    #summary { margin-bottom: 14px; display: grid; gap: 8px; }
-    .pill { display: inline-block; margin-right: 8px; padding: 3px 8px; border-radius: 999px; background: var(--vscode-button-secondaryBackground); }
-    .grid { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(320px, 2fr); gap: 16px; min-height: 420px; }
-    .card { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px; background: var(--vscode-editorWidget-background); }
-    .item { padding: 8px; border-bottom: 1px solid var(--vscode-panel-border); cursor: default; }
-    .item:last-child { border-bottom: 0; }
-    .file { color: var(--vscode-textLink-foreground); cursor: pointer; }
-    svg { width: 100%; height: 520px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-sideBar-background); }
-    text { fill: var(--vscode-editor-foreground); font-size: 12px; }
-    .target { fill: var(--vscode-button-background); }
-    .flow { fill: var(--vscode-charts-orange); }
-    .node { fill: var(--vscode-charts-blue); }
-    line { stroke: var(--vscode-editorLineNumber-foreground); stroke-width: 1.5; }
-  </style>
-</head>
-<body>
-  <div id="loading">Calculating affected flows...</div>
-  <div id="error"></div>
-  <div id="content" style="display:none">
-    <div id="summary"></div>
-    <div class="grid">
-      <div class="card">
-        <h3>Matched Nodes</h3>
-        <div id="nodes"></div>
-      </div>
-      <div>
-        <h3>Affected Flows</h3>
-        <svg id="graph" role="img" aria-label="Affected flows graph"></svg>
-        <div id="flows" class="card" style="margin-top:12px"></div>
-      </div>
-    </div>
-  </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const loading = document.getElementById('loading');
-    const error = document.getElementById('error');
-    const content = document.getElementById('content');
-
-    window.addEventListener('message', event => {
-      const message = event.data;
-      if (message.command === 'setLoading') {
-        loading.style.display = 'block';
-        error.style.display = 'none';
-        content.style.display = 'none';
-      }
-      if (message.command === 'renderError') {
-        loading.style.display = 'none';
-        content.style.display = 'none';
-        error.style.display = 'block';
-        error.textContent = message.message;
-      }
-      if (message.command === 'renderGraph') {
-        loading.style.display = 'none';
-        error.style.display = 'none';
-        content.style.display = 'block';
-        render(message.data);
-      }
-    });
-
-    function render(data) {
-      document.getElementById('summary').innerHTML =
-        '<div><strong>Target:</strong> ' + escapeHtml(data.targetFile) + '</div>' +
-        '<div><span class="pill">' + data.matchedNodes.length + ' matched nodes</span>' +
-        '<span class="pill">' + data.flows.length + ' affected flows</span></div>';
-
-      document.getElementById('nodes').innerHTML = data.matchedNodes.map(node =>
-        '<div class="item">' +
-        '<div><strong>' + escapeHtml(node.label) + '</strong></div>' +
-        '<div>' + escapeHtml(node.project || '') + '</div>' +
-        (node.source_file ? '<div class="file" data-file="' + encodeURIComponent(node.source_file) + '">' + escapeHtml(node.source_file) + '</div>' : '') +
-        '</div>'
-      ).join('') || '<div class="item">No matched nodes.</div>';
-
-      document.getElementById('flows').innerHTML = data.flows.map(flow =>
-        '<div class="item">' +
-        '<strong>#' + flow.id + ' ' + escapeHtml(flow.name) + '</strong>' +
-        '<div>criticality ' + flow.criticality + ' | ' + flow.nodeCount + ' nodes | ' + flow.matchedNodeCount + ' matched</div>' +
-        '</div>'
-      ).join('') || '<div class="item">No affected flows.</div>';
-
-      document.querySelectorAll('.file').forEach(el => {
-        el.addEventListener('click', () => vscode.postMessage({ command: 'openFile', file: decodeURIComponent(el.dataset.file) }));
-      });
-      renderSvg(data);
-    }
-
-    function renderSvg(data) {
-      const svg = document.getElementById('graph');
-      const width = svg.clientWidth || 800;
-      const height = 520;
-      const cx = width * 0.24;
-      const cy = height / 2;
-      const flowX = width * 0.68;
-      const flows = data.flows.slice(0, 12);
-      const spacing = flows.length > 1 ? Math.min(44, 420 / (flows.length - 1)) : 0;
-      const startY = cy - spacing * (flows.length - 1) / 2;
-      let html = '<circle class="target" cx="' + cx + '" cy="' + cy + '" r="34"></circle>' +
-        '<text x="' + cx + '" y="' + (cy + 4) + '" text-anchor="middle">file</text>';
-      flows.forEach((flow, index) => {
-        const y = startY + index * spacing;
-        html += '<line x1="' + (cx + 38) + '" y1="' + cy + '" x2="' + (flowX - 48) + '" y2="' + y + '"></line>' +
-          '<circle class="flow" cx="' + flowX + '" cy="' + y + '" r="28"></circle>' +
-          '<text x="' + flowX + '" y="' + (y + 4) + '" text-anchor="middle">#' + flow.id + '</text>';
-      });
-      svg.innerHTML = html;
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-    }
-  </script>
-</body>
-</html>`;
-  }
-}
-
-function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let value = '';
-  for (let i = 0; i < 32; i++) value += chars.charAt(Math.floor(Math.random() * chars.length));
-  return value;
 }

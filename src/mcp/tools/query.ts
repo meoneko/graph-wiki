@@ -7,11 +7,13 @@ import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 import {
   GetCalleesInput,
   GetCallersInput,
+  GetLineageInput,
   GetNeighborsInput,
   GetNodeInput,
   GetPathInput,
 } from '../schemas/index.js';
 import { QueryResultFactory } from '../../core/graph/query/QueryResultFactory.js';
+import { traceNodeFlow } from '../../core/graph/query/traceNodeFlow.js';
 
 const CALL_EDGE_TYPES = new Set([
   'calls',
@@ -45,6 +47,64 @@ export function registerQueryTools(): void {
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
       const operation = OperationResolver.resolve({ caller: 'mcp.query.get_neighbors', requested: input.operation, requireExplicit: true });
       return engine.analyzeImpact(input.nodeId, operation, input.mode as QueryMode, input.depth);
+    },
+  });
+
+  registerTool({
+    name: 'get_lineage',
+    description: 'Trace upstream and downstream call-flow around a node',
+    inputSchema: GetLineageInput,
+    handler: async (args) => {
+      const input = GetLineageInput.parse(args);
+      const store = getDB(resolveDbPath());
+      const target = store.getNode(input.nodeId);
+      if (!target || target.workspace !== input.workspaceId) {
+        return QueryResultFactory.create({
+          status: 'INSUFFICIENT_EVIDENCE',
+          nodes: [],
+          edges: [],
+          reasons: ['TRACE_TARGET_NOT_FOUND'],
+          codes: ['TRACE_TARGET_NOT_FOUND'],
+          metadata: { tool: { name: 'get_lineage', workspace: input.workspaceId } },
+        });
+      }
+
+      const trace = traceNodeFlow(store, target, {
+        workspaceId: input.workspaceId,
+        direction: input.direction,
+        maxDepth: input.maxDepth,
+        maxNodes: input.maxNodes,
+      });
+      const laneNodes = [
+        ...(trace.upstream?.nodes ?? []),
+        ...(trace.downstream?.nodes ?? []),
+      ];
+      const laneEdges = [
+        ...(trace.upstream?.edges ?? []),
+        ...(trace.downstream?.edges ?? []),
+      ];
+      const nodes = [target, ...laneNodes.map((node) => store.getNode(node.id)).filter((node): node is GraphNode => Boolean(node))];
+      const edges = laneEdges
+        .map((edge) => (input.direction === 'upstream'
+          ? store.getEdgesTo(edge.to_id).find((candidate) => candidate.id === edge.id)
+          : store.getEdgesFrom(edge.from_id).find((candidate) => candidate.id === edge.id)))
+        .filter((edge): edge is GraphEdge => Boolean(edge));
+      const truncated = Boolean(trace.upstream?.truncated || trace.downstream?.truncated);
+
+      return QueryResultFactory.create({
+        status: truncated ? 'PARTIAL' : 'OK',
+        nodes,
+        edges,
+        reasons: truncated ? ['TRACE_RESULT_TRUNCATED'] : ['TRACE completed.'],
+        codes: truncated ? ['TRACE_RESULT_TRUNCATED'] : [],
+        data: { ...trace },
+        metadata: {
+          tool: { name: 'get_lineage', workspace: input.workspaceId },
+          direction: input.direction,
+          maxDepth: input.maxDepth,
+          maxNodes: input.maxNodes,
+        },
+      });
     },
   });
 

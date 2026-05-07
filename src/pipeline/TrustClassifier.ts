@@ -24,7 +24,7 @@ export class TrustClassifier {
         }
 
         // 2. Derived: Results of cross-file analysis or composition rules
-        if (e.includes('analysis') || e.includes('composition') || e.includes('enrichment') || e === 'ts_react_adapter') {
+        if (e.includes('analysis') || e.includes('composition') || e.includes('enrichment') || e === 'ts_react_adapter' || e === 'csharp_legacy_fallback') {
             return {
                 trust_level: 'DERIVED',
                 decision_status: 'OK',

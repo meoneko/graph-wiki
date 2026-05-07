@@ -30,6 +30,8 @@ export const GetLineageInput = z.object({
   nodeId: z.string(),
   workspaceId: z.string(),
   direction: z.enum(['upstream', 'downstream', 'both']).optional().default('both'),
+  maxDepth: z.number().int().min(1).max(15).optional().default(5),
+  maxNodes: z.number().int().min(1).max(500).optional().default(100),
   operation: OperationInput,
   mode: QueryModeInput,
 });

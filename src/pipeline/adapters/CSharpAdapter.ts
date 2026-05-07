@@ -1,61 +1,56 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AdapterContext, CalledSymbolRef, CandidateRecord, EvidenceSpan, IProjectAdapter } from '../../core/types.js';
-import type { ParsedSymbol } from '../../scanner/core/ILanguageParser.js';
+import {
+  DEFAULT_PARSE_BUDGET,
+  type AdapterParsedResult,
+  type ParsedFile,
+  type ParsedSymbol,
+  type SourceFileSnapshot,
+} from '../../scanner/core/ILanguageParser.js';
+import { readSourceFileSnapshot } from '../../scanner/core/sourceFileSnapshot.js';
 import { CSharpParser } from '../../scanner/languages/csharp/CSharpParser.js';
-import { readFile } from 'node:fs/promises';
-import { TextDecoder } from 'node:util';
+
+type ParsedCSharpFile = ParsedFile & {
+  sourceHash?: string;
+  encoding?: SourceFileSnapshot['encoding'];
+};
 
 function stableId(...parts: string[]): string {
   return createHash('sha1').update(parts.join('|')).digest('hex');
 }
 
-function decodeCSharpSource(raw: Buffer): string {
-  if (raw.length >= 2) {
-    const b0 = raw[0] ?? 0;
-    const b1 = raw[1] ?? 0;
-    if (b0 === 0xff && b1 === 0xfe) {
-      return new TextDecoder('utf-16le').decode(raw.subarray(2));
-    }
-    if (b0 === 0xfe && b1 === 0xff) {
-      const swapped = Buffer.allocUnsafe(raw.length - 2);
-      for (let i = 2; i + 1 < raw.length; i += 2) {
-        swapped[i - 2] = raw[i + 1] ?? 0;
-        swapped[i - 1] = raw[i] ?? 0;
-      }
-      return new TextDecoder('utf-16le').decode(swapped);
-    }
-  }
-
-  let source = new TextDecoder('utf-8').decode(raw);
-  const sample = source.slice(0, Math.min(source.length, 4096));
-  const nullCount = [...sample].filter((ch) => ch === '\u0000').length;
-  if (sample.length > 0 && (nullCount / sample.length) > 0.2) {
-    source = new TextDecoder('utf-16le').decode(raw);
-  }
-  return source.replace(/\u0000/g, '');
-}
-
 export class CSharpAdapter implements IProjectAdapter {
   private readonly parser = new CSharpParser();
 
-  async parse(paths: string[]): Promise<{ paths: string[]; files: Array<{ filePath: string; symbols: ParsedSymbol[] }> }> {
-    const files = await Promise.all(paths.map(async (p) => {
-      const raw = await readFile(p);
-      const source = decodeCSharpSource(raw);
-      const parsed = this.parser.parse(source, p);
-      return { filePath: p, symbols: parsed.symbols };
-    }));
-    return { paths, files };
+  async parse(paths: string[]): Promise<AdapterParsedResult> {
+    const snapshots = await Promise.all(paths.map((p) => readSourceFileSnapshot(p)));
+    return this.parseSnapshots(snapshots);
+  }
+
+  async parseSnapshots(snapshots: SourceFileSnapshot[]): Promise<AdapterParsedResult> {
+    await this.parser.ensureReady();
+    const files = snapshots.map((snapshot): ParsedCSharpFile => {
+      const parsed = this.parser.parseWithContext(snapshot.content, snapshot.filePath, {
+        budget: DEFAULT_PARSE_BUDGET,
+        snapshot,
+      });
+      return {
+        ...parsed,
+        sourceHash: snapshot.hash,
+        encoding: snapshot.encoding,
+      };
+    });
+    return { paths: snapshots.map((snapshot) => snapshot.filePath), files };
   }
 
   async extract(parsed: unknown, context: AdapterContext): Promise<CandidateRecord[]> {
-    const input = parsed as { files: Array<{ filePath: string; symbols: ParsedSymbol[] }> };
+    const input = parsed as { files: ParsedCSharpFile[] };
     const out: CandidateRecord[] = [];
 
     for (const file of input.files) {
       for (const symbol of file.symbols) {
-        const candidate = this.symbolToCandidate(symbol, file.filePath, context);
+        const candidate = this.symbolToCandidate(symbol, file, context);
         out.push(candidate);
       }
     }
@@ -71,9 +66,10 @@ export class CSharpAdapter implements IProjectAdapter {
     return candidates;
   }
 
-
-  private symbolToCandidate(symbol: ParsedSymbol, filePath: string, context: AdapterContext): CandidateRecord {
+  private symbolToCandidate(symbol: ParsedSymbol, file: ParsedCSharpFile, context: AdapterContext): CandidateRecord {
+    const filePath = file.filePath;
     const nodeType = this.resolveNodeType(symbol);
+    const declaringTypeFullName = this.declaringTypeFullName(symbol);
     const evidence: EvidenceSpan = {
       evidence_id: stableId(filePath, symbol.name, String(symbol.startLine)),
       source_file: filePath,
@@ -100,7 +96,7 @@ export class CSharpAdapter implements IProjectAdapter {
         line: c.callSite.line,
         column: c.callSite.column,
         source_file: filePath,
-        containingClass: symbol.containingClass,
+        containingClass: declaringTypeFullName ?? symbol.containingClass,
         receiver: c.receiver,
         receiverType: c.receiverType,
       })),
@@ -108,7 +104,7 @@ export class CSharpAdapter implements IProjectAdapter {
       http_path: this.extractHttpPath(symbol),
       annotations: symbol.annotations,
       evidence: [evidence],
-      extractor: 'csharp_tree_sitter',
+      extractor: file.parseMode === 'fallback' ? 'csharp_legacy_fallback' : 'csharp_tree_sitter',
       status: 'candidate',
       lang_meta: {
         originalKind: symbol.kind,
@@ -118,9 +114,27 @@ export class CSharpAdapter implements IProjectAdapter {
         returnType: symbol.returnType,
         namespace: symbol.namespace,
         containingClass: symbol.containingClass,
+        declaringTypeFullName,
+        isPartial: symbol.isPartial ?? false,
+        parseMode: file.parseMode,
+        parseMetrics: file.metrics,
+        sourceHash: file.sourceHash,
+        encoding: file.encoding,
         semantic_role: this.inferSemanticRole(symbol),
       },
     };
+  }
+
+  private declaringTypeFullName(symbol: ParsedSymbol): string | undefined {
+    const qualifiedName = symbol.qualifiedName || symbol.name;
+    if (qualifiedName.includes('.')) {
+      const parts = qualifiedName.split('.');
+      parts.pop();
+      if (parts.length > 0) return parts.join('.');
+    }
+    if (!symbol.containingClass) return undefined;
+    if (!symbol.namespace || symbol.containingClass.startsWith(`${symbol.namespace}.`)) return symbol.containingClass;
+    return `${symbol.namespace}.${symbol.containingClass}`;
   }
 
   private resolveNodeType(symbol: ParsedSymbol): CandidateRecord['candidate_type'] {
