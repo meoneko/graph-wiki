@@ -90,6 +90,12 @@ export class SetupPanel {
         case 'runPostprocess':
           await this.runOperation('runPostprocess', () => this.service.runPostprocess());
           return;
+        case 'generateAgentContext':
+          await vscode.commands.executeCommand('crg.generateAgentContext');
+          return;
+        case 'openSettings':
+          await vscode.commands.executeCommand('crg.openSettings');
+          return;
       }
     } catch (error) {
       await this.post('error', { message: errorMessage(error) });
@@ -258,6 +264,7 @@ export class SetupPanel {
       <input id="serverCwd" placeholder="D:/projects/viet/code-review-graph" />
       <button id="browse" class="secondary">Browse...</button>
       <button id="test">Test Connection</button>
+      <button id="openSettings" class="secondary">Open VS Code Settings</button>
       <div id="connection" class="status">Not tested</div>
     </section>
     <section class="card">
@@ -276,6 +283,7 @@ export class SetupPanel {
     <button id="loadGraph">Load Graph State</button>
     <button id="build">Build Graph</button>
     <button id="postprocess">Run Postprocess</button>
+    <button id="generateAgentContext">Generate Agent Context</button>
     <div id="graphState" class="status">No graph state loaded</div>
   </section>
   <section class="card" style="margin-top:16px">
@@ -289,10 +297,12 @@ export class SetupPanel {
 
     el('browse').addEventListener('click', () => vscode.postMessage({ command: 'browseServerPath' }));
     el('test').addEventListener('click', () => vscode.postMessage({ command: 'testConnection', serverPath: el('serverPath').value, serverCwd: el('serverCwd').value }));
+    el('openSettings').addEventListener('click', () => vscode.postMessage({ command: 'openSettings' }));
     el('save').addEventListener('click', () => vscode.postMessage({ command: 'saveSettings', settings: readSettings() }));
     el('loadGraph').addEventListener('click', () => vscode.postMessage({ command: 'loadGraphState' }));
     el('build').addEventListener('click', () => vscode.postMessage({ command: 'buildGraph' }));
     el('postprocess').addEventListener('click', () => vscode.postMessage({ command: 'runPostprocess' }));
+    el('generateAgentContext').addEventListener('click', () => vscode.postMessage({ command: 'generateAgentContext' }));
     el('serverPath').addEventListener('input', markDirtyAndDisconnect);
     el('serverCwd').addEventListener('input', markDirtyAndDisconnect);
     el('workspaceId').addEventListener('change', markDirty);
@@ -385,6 +395,7 @@ export class SetupPanel {
       el('loadGraph').disabled = !state.connected || !state.saved || state.dirty || !hasWorkspace || state.operationRunning;
       el('build').disabled = !state.connected || !state.saved || state.dirty || !hasWorkspace || state.operationRunning;
       el('postprocess').disabled = !state.connected || !state.saved || state.dirty || !hasWorkspace || state.operationRunning;
+      el('generateAgentContext').disabled = !state.connected || !state.saved || state.dirty || !hasWorkspace || state.operationRunning;
     }
 
     function renderGraphState(msg) {

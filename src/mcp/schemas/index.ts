@@ -149,6 +149,25 @@ export const GetAffectedFlowsInput = z.object({
   nodeIds: z.array(z.string()).optional(),
 });
 
+export const GenerateAgentContextInput = z.object({
+  workspaceId: z.string(),
+  projectId: z.string().optional(),
+  maxEntrypoints: z.number().int().min(1).max(500).optional().default(50),
+  maxFlows: z.number().int().min(1).max(200).optional().default(20),
+  mode: QueryModeInput,
+});
+
+export const GetSymbolContextInput = z.object({
+  workspaceId: z.string(),
+  projectId: z.string().optional(),
+  nodeId: z.string().optional(),
+  symbol: z.string().optional(),
+  maxCallers: z.number().int().min(1).max(200).optional().default(25),
+  maxCallees: z.number().int().min(1).max(200).optional().default(25),
+  maxFlows: z.number().int().min(1).max(100).optional().default(10),
+  mode: QueryModeInput,
+});
+
 export const GetCommunityInput = z.object({
   workspaceId: z.string(),
   communityId: z.number().int(),

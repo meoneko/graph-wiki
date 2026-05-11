@@ -78,9 +78,19 @@
         "icon": "$(shield)"
       },
       {
+        "command": "crg.generateAgentContext",
+        "title": "CRG: Generate Agent Context",
+        "icon": "$(file-code)"
+      },
+      {
         "command": "crg.openSetup",
         "title": "CRG: Open Setup",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "crg.openSettings",
+        "title": "CRG: Open Settings",
+        "icon": "$(settings)"
       }
     ],
     "menus": {

@@ -11,10 +11,12 @@ import { resolveDbPath } from '../../pipeline/config.js';
 import { runPostProcess } from '../../pipeline/postprocess.js';
 import { getDB } from '../../storage/GraphDB.js';
 import {
+  GenerateAgentContextInput,
   GetAffectedFlowsInput,
   GetCommunityInput,
   GetFlowInput,
   GetMinimalContextInput,
+  GetSymbolContextInput,
   ListCommunitiesInput,
   ListFlowsInput,
   RunPostProcessInput,
@@ -24,6 +26,7 @@ import {
   findNodesByFiles,
   flowProjects,
   getWorkspaceGraph,
+  nodeSummary,
 } from './graphToolUtils.js';
 import { registerTool } from './runtime.js';
 import { notifyGraphUpdated } from '../server.js';
@@ -48,6 +51,7 @@ function communityTouchesProject(community: { nodeIds: string[] }, nodeById: Map
 }
 
 function graphStateNextTools(input: {
+  hasNodes: boolean;
   hasFlows: boolean;
   hasCommunities: boolean;
   hasChangedMatches: boolean;
@@ -67,6 +71,9 @@ function graphStateNextTools(input: {
   if (input.hasCommunities) {
     suggestions.push({ tool: 'list_communities', reasonCode: 'communities_available' });
   }
+  if (input.hasNodes && (input.hasFlows || input.hasCommunities)) {
+    suggestions.push({ tool: 'generate_agent_context', reasonCode: 'agent_context_available' });
+  }
   if (suggestions.length === 0) {
     suggestions.push({ tool: 'run_postprocess', reasonCode: 'postprocess_data_missing' });
   }
@@ -77,6 +84,116 @@ const FOCUS_HINT_LIMIT = 200;
 
 function capArray<T>(items: T[], limit = FOCUS_HINT_LIMIT): T[] {
   return items.length > limit ? items.slice(0, limit) : items;
+}
+
+function roleCounts(nodes: GraphNode[]): Array<{ role: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    for (const role of node.roles ?? []) counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([role, count]) => ({ role, count }));
+}
+
+function languageCounts(nodes: GraphNode[]): Array<{ name: string; nodeCount: number }> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) counts.set(node.language, (counts.get(node.language) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, nodeCount]) => ({ name, nodeCount }));
+}
+
+function frameworkCounts(nodes: GraphNode[]): Array<{ name: string; nodeCount: number; entrypointCount: number }> {
+  const counts = new Map<string, { nodeCount: number; entrypointCount: number }>();
+  for (const node of nodes) {
+    if (!node.framework) continue;
+    const current = counts.get(node.framework) ?? { nodeCount: 0, entrypointCount: 0 };
+    current.nodeCount += 1;
+    if ((node.roles ?? []).includes('entrypoint')) current.entrypointCount += 1;
+    counts.set(node.framework, current);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1].nodeCount - a[1].nodeCount)
+    .map(([name, value]) => ({ name, ...value }));
+}
+
+function isVisibleInMode(node: GraphNode, mode: string): boolean {
+  if (mode === 'authoritative') return node.trust_level === 'AUTHORITATIVE' || node.graph_kind === 'canonical';
+  if (mode === 'exploratory') return true;
+  return node.graph_kind !== 'external';
+}
+
+function agentContextMarkdown(input: {
+  workspaceId: string;
+  projectId?: string;
+  generatedAt: string;
+  stats: { nodeCount: number; edgeCount: number; flowCount: number; communityCount: number; entrypointCount: number };
+  entrypoints: ReturnType<typeof nodeSummary>[];
+  criticalFlows: Array<{ id: number; name: string; criticality: number; nodeCount: number; depth: number }>;
+  languages: Array<{ name: string; nodeCount: number }>;
+  frameworks: Array<{ name: string; nodeCount: number; entrypointCount: number }>;
+  roles: Array<{ role: string; count: number }>;
+}): string {
+  const lines = [
+    `# CRG Agent Context — ${input.projectId ?? input.workspaceId}`,
+    '',
+    `Generated: ${input.generatedAt}`,
+    '',
+    '## Summary',
+    `- Workspace: ${input.workspaceId}`,
+    ...(input.projectId ? [`- Project: ${input.projectId}`] : []),
+    `- Nodes: ${input.stats.nodeCount}`,
+    `- Edges: ${input.stats.edgeCount}`,
+    `- Flows: ${input.stats.flowCount}`,
+    `- Communities: ${input.stats.communityCount}`,
+    `- Entrypoints: ${input.stats.entrypointCount}`,
+    '',
+    '## Dimensions',
+    `- Languages: ${input.languages.map((item) => `${item.name}=${item.nodeCount}`).join(', ') || 'none'}`,
+    `- Frameworks: ${input.frameworks.map((item) => `${item.name}=${item.nodeCount}/${item.entrypointCount} entrypoints`).join(', ') || 'none'}`,
+    `- Roles: ${input.roles.map((item) => `${item.role}=${item.count}`).join(', ') || 'none'}`,
+    '',
+    '## Entrypoints',
+    ...input.entrypoints.map((node) => `- ${node.label} (${node.project}${node.framework ? `, ${node.framework}` : ''})${node.source_file ? ` — ${node.source_file}` : ''}`),
+    ...(input.entrypoints.length === 0 ? ['- none'] : []),
+    '',
+    '## Critical Flows',
+    ...input.criticalFlows.map((flow) => `- #${flow.id} ${flow.name} — criticality=${flow.criticality}, nodes=${flow.nodeCount}, depth=${flow.depth}`),
+    ...(input.criticalFlows.length === 0 ? ['- none'] : []),
+    '',
+    '## Recommended Tool Workflow',
+    '- Start: get_minimal_context',
+    '- Locate: search_nodes → get_node',
+    '- Understand impact: get_affected_flows → get_lineage',
+    '- Validate changes: detect_changes or review_diff with full unified diff',
+  ];
+  return lines.join('\n');
+}
+
+function symbolContextNextTools(input: {
+  hasFlows: boolean;
+  callers: number;
+  callees: number;
+  isEntrypoint: boolean;
+}): Array<{ tool: string; reasonCode: string }> {
+  const suggestions: Array<{ tool: string; reasonCode: string }> = [
+    { tool: 'get_lineage', reasonCode: 'lineage_available' },
+  ];
+  if (input.hasFlows) suggestions.push({ tool: 'get_flow', reasonCode: 'flow_membership_found' });
+  if (input.callers > 0) suggestions.push({ tool: 'get_callers', reasonCode: 'callers_available' });
+  if (input.callees > 0) suggestions.push({ tool: 'get_callees', reasonCode: 'callees_available' });
+  if (input.isEntrypoint) suggestions.push({ tool: 'get_affected_flows', reasonCode: 'entrypoint_impact_available' });
+  if (input.callers === 0 && input.callees === 0) suggestions.push({ tool: 'search_nodes', reasonCode: 'isolated_symbol_check_search' });
+  return suggestions;
+}
+
+function resolveSymbolTarget(nodes: GraphNode[], symbol: string): GraphNode | GraphNode[] | undefined {
+  const exact = nodes.filter((node) => node.symbol === symbol);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return exact;
+
+  const lower = symbol.toLowerCase();
+  const insensitive = nodes.filter((node) => node.symbol?.toLowerCase() === lower);
+  if (insensitive.length === 1) return insensitive[0];
+  if (insensitive.length > 1) return insensitive;
+  return undefined;
 }
 
 // ── Tool registration ─────────────────────────────────────────────────────────
@@ -256,6 +373,8 @@ export function registerPostprocessTools(): void {
           matchedNodes: [...matchedNodeMap.values()].map((node) => ({
             id: node.id,
             label: node.label,
+            type: node.type,
+            roles: node.roles ?? [],
             project: node.project,
             source_file: node.source_file,
           })),
@@ -430,6 +549,7 @@ export function registerPostprocessTools(): void {
       }
 
       const suggestedNext = graphStateNextTools({
+        hasNodes: scopedNodes.length > 0,
         hasFlows: flows.length > 0,
         hasCommunities: communities.length > 0,
         hasChangedMatches: changedFileMatches.matchedNodes.length > 0,
@@ -480,4 +600,5 @@ export function registerPostprocessTools(): void {
     },
   });
 }
+
 
