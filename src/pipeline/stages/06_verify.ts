@@ -41,7 +41,7 @@ export async function verifyGraph(
 
   const verification = workspace.verification ?? {};
 
-  const entrypoints = nodes.filter((n) => n.type.includes('route') || n.type.includes('controller') || n.type.includes('api'));
+  const entrypoints = nodes.filter((n) => (n.roles ?? []).includes('entrypoint'));
   if (verification.require_flows && entrypoints.length === 0) {
     issues.push('FLOWS_REQUIRED_BUT_NOT_FOUND');
   }

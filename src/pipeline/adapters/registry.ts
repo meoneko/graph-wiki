@@ -16,6 +16,9 @@ class AdapterRegistry {
   private readonly registry: AdapterRegistration[] = [];
 
   register(name: string, pattern: RegExp, adapterFactory: () => IProjectAdapter): void {
+    if (pattern.global || pattern.sticky) {
+      throw new Error(`Adapter pattern for ${name} must not use global or sticky flags.`);
+    }
     this.registry.push({ name, pattern, adapterFactory });
   }
 

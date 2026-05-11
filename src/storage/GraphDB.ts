@@ -134,10 +134,57 @@ ALTER TABLE nodes ADD COLUMN trust_level TEXT;
 ALTER TABLE edges ADD COLUMN trust_level TEXT;
 `;
 
+const MIGRATION_0004 = `
+CREATE TABLE IF NOT EXISTS flows (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace      TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  entry_point_id TEXT NOT NULL,
+  depth          INTEGER NOT NULL DEFAULT 0,
+  node_count     INTEGER NOT NULL DEFAULT 0,
+  file_count     INTEGER NOT NULL DEFAULT 0,
+  criticality    REAL NOT NULL DEFAULT 0.0,
+  path           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flows_workspace   ON flows(workspace);
+CREATE INDEX IF NOT EXISTS idx_flows_criticality ON flows(workspace, criticality DESC);
+
+CREATE TABLE IF NOT EXISTS flow_memberships (
+  flow_id  INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  node_id  TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (flow_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_memberships_node ON flow_memberships(node_id);
+
+CREATE TABLE IF NOT EXISTS communities (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace TEXT NOT NULL,
+  name      TEXT NOT NULL,
+  size      INTEGER NOT NULL DEFAULT 0,
+  cohesion  REAL NOT NULL DEFAULT 0.0
+);
+CREATE INDEX IF NOT EXISTS idx_communities_workspace ON communities(workspace);
+
+CREATE TABLE IF NOT EXISTS community_memberships (
+  community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  node_id      TEXT NOT NULL,
+  PRIMARY KEY (community_id, node_id)
+);
+`;
+
+const MIGRATION_0005 = `
+ALTER TABLE nodes ADD COLUMN roles TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE nodes ADD COLUMN language TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE nodes ADD COLUMN framework TEXT;
+`;
+
 const MIGRATIONS: Array<{ version: string; sql: string }> = [
   { version: '0001_init', sql: MIGRATION_0001 },
   { version: '0002_updated_at', sql: MIGRATION_0002 },
   { version: '0003_trust_level', sql: MIGRATION_0003 },
+  { version: '0004_postprocess', sql: MIGRATION_0004 },
+  { version: '0005_node_roles', sql: MIGRATION_0005 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -220,25 +267,38 @@ export class GraphDB {
   // ── Nodes ─────────────────────────────────────────────────────────────────
 
   upsertNode(node: GraphNode): void {
-    const row = mapNodeToDB(node);
-    this.db.prepare(`
-      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, provenance, updated_at)
-      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @provenance, @updated_at)
+    this.upsertNodes([node]);
+  }
+
+  upsertNodes(nodes: GraphNode[]): void {
+    if (nodes.length === 0) return;
+
+    const upsertNode = this.db.prepare(`
+      INSERT INTO nodes(id, workspace, project, label, type, roles, language, framework, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, provenance, updated_at)
+      VALUES (@id, @workspace, @project, @label, @type, @roles, @language, @framework, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @provenance, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, project=excluded.project, label=excluded.label, type=excluded.type,
+        roles=excluded.roles, language=excluded.language, framework=excluded.framework,
         graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level, source_file=excluded.source_file,
         symbol=excluded.symbol, http_method=excluded.http_method, http_path=excluded.http_path,
         domain=excluded.domain, lang_meta=excluded.lang_meta, provenance=excluded.provenance, updated_at=excluded.updated_at
-    `).run({ ...row, updated_at: node.updated_at || new Date().toISOString() });
-
-    this.db.prepare(`
+    `);
+    const deleteFts = this.db.prepare(`
       DELETE FROM nodes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?)
-    `).run(node.id);
-
-    this.db.prepare(`
+    `);
+    const insertFts = this.db.prepare(`
       INSERT INTO nodes_fts(rowid, id, label, symbol, http_path, domain)
       VALUES ((SELECT rowid FROM nodes WHERE id = ?), ?, ?, ?, ?, ?)
-    `).run(node.id, node.id, node.label, node.symbol ?? '', node.http_path ?? '', node.domain ?? '');
+    `);
+
+    this.db.transaction(() => {
+      for (const node of nodes) {
+        const row = mapNodeToDB(node);
+        upsertNode.run({ ...row, updated_at: node.updated_at || new Date().toISOString() });
+        deleteFts.run(node.id);
+        insertFts.run(node.id, node.id, node.label, node.symbol ?? '', node.http_path ?? '', node.domain ?? '');
+      }
+    })();
   }
 
   getNode(id: string): GraphNode | undefined {
@@ -268,15 +328,27 @@ export class GraphDB {
   // ── Edges ─────────────────────────────────────────────────────────────────
 
   upsertEdge(edge: GraphEdge): void {
-    const row = mapEdgeToDB(edge);
-    this.db.prepare(`
+    this.upsertEdges([edge]);
+  }
+
+  upsertEdges(edges: GraphEdge[]): void {
+    if (edges.length === 0) return;
+
+    const upsertEdge = this.db.prepare(`
       INSERT INTO edges(id, workspace, from_id, to_id, type, graph_kind, confidence, trust_level, metadata, provenance, updated_at)
       VALUES (@id, @workspace, @from_id, @to_id, @type, @graph_kind, @confidence, @trust_level, @metadata, @provenance, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, from_id=excluded.from_id, to_id=excluded.to_id,
         type=excluded.type, graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level,
         metadata=excluded.metadata, provenance=excluded.provenance, updated_at=excluded.updated_at
-    `).run({ ...row, updated_at: edge.updated_at || new Date().toISOString() });
+    `);
+
+    this.db.transaction(() => {
+      for (const edge of edges) {
+        const row = mapEdgeToDB(edge);
+        upsertEdge.run({ ...row, updated_at: edge.updated_at || new Date().toISOString() });
+      }
+    })();
   }
 
   getEdgesFrom(nodeId: string): GraphEdge[] {
@@ -297,14 +369,18 @@ export class GraphDB {
 
   clearWorkspaceData(workspace: string, projectIds: string[]): void {
     this.db.transaction(() => {
+      // FTS + embeddings
       this.db.prepare('DELETE FROM nodes_fts WHERE rowid IN (SELECT rowid FROM nodes WHERE workspace = ?)').run(workspace);
       this.db.prepare('DELETE FROM facts_fts WHERE rowid IN (SELECT rowid FROM facts WHERE workspace = ?)').run(workspace);
-
       this.db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE workspace = ?)').run(workspace);
+      // Core graph
       this.db.prepare('DELETE FROM edges WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM nodes WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM facts WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM rejects WHERE workspace = ?').run(workspace);
+      // Postprocess — flows/communities CASCADE-delete memberships via FK
+      this.db.prepare('DELETE FROM flows WHERE workspace = ?').run(workspace);
+      this.db.prepare('DELETE FROM communities WHERE workspace = ?').run(workspace);
 
       for (const projectId of projectIds) {
         this.db.prepare('DELETE FROM file_hashes WHERE project = ?').run(projectId);
@@ -315,36 +391,48 @@ export class GraphDB {
   // ── Facts ─────────────────────────────────────────────────────────────────
 
   upsertFact(fact: NormalizedFact): void {
-    const id = fact.fact_id || fact.candidate_id;
-    this.db.prepare(`
+    this.upsertFacts([fact]);
+  }
+
+  upsertFacts(facts: NormalizedFact[]): void {
+    if (facts.length === 0) return;
+
+    const upsertFact = this.db.prepare(`
       INSERT INTO facts(id, workspace, project, type, symbol, source_file, line_start, line_end, status, data, fingerprint)
       VALUES (@id, @workspace, @project, @type, @symbol, @source_file, @line_start, @line_end, @status, @data, @fingerprint)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, project=excluded.project, type=excluded.type,
         symbol=excluded.symbol, source_file=excluded.source_file, line_start=excluded.line_start,
         line_end=excluded.line_end, status=excluded.status, data=excluded.data, fingerprint=excluded.fingerprint
-    `).run({
-      id,
-      workspace: fact.workspaceId,
-      project: fact.project,
-      type: fact.candidate_type,
-      symbol: fact.symbol,
-      source_file: fact.source_file,
-      line_start: fact.line_start,
-      line_end: fact.line_end,
-      status: fact.status,
-      data: JSON.stringify(fact),
-      fingerprint: `${fact.project}:${fact.source_file}:${fact.symbol}:${fact.line_start}:${fact.line_end}`,
-    });
-
-    this.db.prepare(`
+    `);
+    const deleteFts = this.db.prepare(`
       DELETE FROM facts_fts WHERE rowid = (SELECT rowid FROM facts WHERE id = ?)
-    `).run(id);
-
-    this.db.prepare(`
+    `);
+    const insertFts = this.db.prepare(`
       INSERT INTO facts_fts(rowid, id, symbol, source_file)
       VALUES ((SELECT rowid FROM facts WHERE id = ?), ?, ?, ?)
-    `).run(id, id, fact.symbol, fact.source_file);
+    `);
+
+    this.db.transaction(() => {
+      for (const fact of facts) {
+        const id = fact.fact_id || fact.candidate_id;
+        upsertFact.run({
+          id,
+          workspace: fact.workspaceId,
+          project: fact.project,
+          type: fact.candidate_type,
+          symbol: fact.symbol,
+          source_file: fact.source_file,
+          line_start: fact.line_start,
+          line_end: fact.line_end,
+          status: fact.status,
+          data: JSON.stringify(fact),
+          fingerprint: `${fact.project}:${fact.source_file}:${fact.symbol}:${fact.line_start}:${fact.line_end}`,
+        });
+        deleteFts.run(id);
+        insertFts.run(id, id, fact.symbol, fact.source_file);
+      }
+    })();
   }
 
   getFactsByWorkspace(workspace: string): NormalizedFact[] {
@@ -402,6 +490,117 @@ export class GraphDB {
       .map((r) => ({ nodeId: r.node_id, score: cosine(vector, bufferToVec(r.vector)) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
+  }
+
+  // ── Flows ─────────────────────────────────────────────────────────────────
+
+  clearFlowsForWorkspace(workspace: string): void {
+    // P1 FIX: only clear flows — communities are managed independently by clearCommunitiesForWorkspace.
+    // CASCADE deletes flow_memberships automatically via FK.
+    this.db.prepare('DELETE FROM flows WHERE workspace = ?').run(workspace);
+  }
+
+  clearCommunitiesForWorkspace(workspace: string): void {
+    // Idempotent clear — community_memberships cascade-deleted via FK
+    this.db.prepare('DELETE FROM communities WHERE workspace = ?').run(workspace);
+  }
+
+  insertFlow(workspace: string, flow: {
+    name: string;
+    entryPointId: string;
+    depth: number;
+    nodeCount: number;
+    fileCount: number;
+    criticality: number;
+    path: string[];
+  }): number {
+    const result = this.db.prepare(`
+      INSERT INTO flows(workspace, name, entry_point_id, depth, node_count, file_count, criticality, path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      workspace,
+      flow.name,
+      flow.entryPointId,
+      flow.depth,
+      flow.nodeCount,
+      flow.fileCount,
+      flow.criticality,
+      JSON.stringify(flow.path),
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  insertFlowMemberships(flowId: number, nodeIds: string[]): void {
+    const stmt = this.db.prepare('INSERT OR IGNORE INTO flow_memberships(flow_id, node_id, position) VALUES (?, ?, ?)');
+    this.db.transaction(() => {
+      nodeIds.forEach((nodeId, position) => stmt.run(flowId, nodeId, position));
+    })();
+  }
+
+  getFlows(workspace: string): Array<{
+    id: number;
+    name: string;
+    entryPointId: string;
+    depth: number;
+    nodeCount: number;
+    fileCount: number;
+    criticality: number;
+    path: string[];
+  }> {
+    const rows = this.db.prepare('SELECT * FROM flows WHERE workspace = ? ORDER BY criticality DESC').all(workspace) as Array<{
+      id: number; name: string; entry_point_id: string;
+      depth: number; node_count: number; file_count: number; criticality: number; path: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      entryPointId: r.entry_point_id,
+      depth: r.depth,
+      nodeCount: r.node_count,
+      fileCount: r.file_count,
+      criticality: r.criticality,
+      path: jsonParse<string[]>(r.path, []),
+    }));
+  }
+
+  insertCommunity(workspace: string, community: {
+    name: string;
+    size: number;
+    cohesion: number;
+  }): number {
+    const result = this.db.prepare(`
+      INSERT INTO communities(workspace, name, size, cohesion) VALUES (?, ?, ?, ?)
+    `).run(workspace, community.name, community.size, community.cohesion);
+    return result.lastInsertRowid as number;
+  }
+
+  insertCommunityMemberships(communityId: number, nodeIds: string[]): void {
+    const stmt = this.db.prepare('INSERT OR IGNORE INTO community_memberships(community_id, node_id) VALUES (?, ?)');
+    this.db.transaction(() => {
+      nodeIds.forEach((nodeId) => stmt.run(communityId, nodeId));
+    })();
+  }
+
+  getCommunities(workspace: string): Array<{
+    id: number;
+    name: string;
+    size: number;
+    cohesion: number;
+    nodeIds: string[];
+  }> {
+    const rows = this.db.prepare('SELECT * FROM communities WHERE workspace = ? ORDER BY cohesion DESC').all(workspace) as Array<{
+      id: number; name: string; size: number; cohesion: number;
+    }>;
+    return rows.map((r) => {
+      const memberRows = this.db.prepare('SELECT node_id FROM community_memberships WHERE community_id = ?').all(r.id) as Array<{ node_id: string }>;
+      return {
+        id: r.id,
+        name: r.name,
+        size: r.size,
+        cohesion: r.cohesion,
+        nodeIds: memberRows.map((m) => m.node_id),
+      };
+    });
   }
 
   // ── Transactions + lifecycle ───────────────────────────────────────────────

@@ -1,5 +1,4 @@
-﻿import type { CandidateRecord, NormalizedFact, RejectedRecord } from '../../core/types.js';
-import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
+﻿import { CORE_NODE_KINDS, type CandidateRecord, type NormalizedFact, type RejectedRecord } from '../../core/types.js';
 import { GraphDB } from '../../storage/GraphDB.js';
 import { TRUST_POLICY_VERSION, TrustClassifier } from '../TrustClassifier.js';
 
@@ -8,14 +7,40 @@ export async function validateFacts(candidates: CandidateRecord[], workspaceId: 
   const rejects: RejectedRecord[] = [];
 
   for (const c of candidates) {
-    if (!nodeTypeRegistry.has(c.candidate_type)) {
+    if (!CORE_NODE_KINDS.includes(c.candidate_type)) {
       rejects.push({
         id: `reject:${c.candidate_id}`,
         workspace: workspaceId,
         project: c.project,
         stage: 'validate',
-        reason_code: 'UNKNOWN_NODE_TYPE',
+        reason_code: 'UNKNOWN_NODE_KIND',
         details: `candidate_type=${c.candidate_type}`,
+        source_file: c.source_file,
+        symbol: c.symbol,
+      });
+      continue;
+    }
+    if (!Array.isArray(c.roles)) {
+      rejects.push({
+        id: `reject:${c.candidate_id}`,
+        workspace: workspaceId,
+        project: c.project,
+        stage: 'validate',
+        reason_code: 'INVALID_NODE_ROLES',
+        details: 'roles must be an array',
+        source_file: c.source_file,
+        symbol: c.symbol,
+      });
+      continue;
+    }
+    if (!c.language) {
+      rejects.push({
+        id: `reject:${c.candidate_id}`,
+        workspace: workspaceId,
+        project: c.project,
+        stage: 'validate',
+        reason_code: 'MISSING_NODE_LANGUAGE',
+        details: 'language is required',
         source_file: c.source_file,
         symbol: c.symbol,
       });
@@ -36,9 +61,9 @@ export async function validateFacts(candidates: CandidateRecord[], workspaceId: 
       decision_status: classification.decision_status,
     };
 
-    db.upsertFact(fact);
     facts.push(fact);
   }
 
+  db.upsertFacts(facts);
   return { facts, rejects };
 }

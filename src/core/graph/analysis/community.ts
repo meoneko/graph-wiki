@@ -1,4 +1,5 @@
-﻿import type { GraphEdge, GraphNode } from '../../types.js';
+﻿import path from 'node:path';
+import type { GraphEdge, GraphNode } from '../../types.js';
 
 export interface Community {
   id: string;
@@ -8,30 +9,87 @@ export interface Community {
   couplingWarnings: Array<{ targetCommunityId: string; edgeCount: number }>;
 }
 
+const EDGE_WEIGHTS: Record<string, number> = {
+  calls: 1.0,
+  imports: 0.6,
+  inherits: 0.8,
+  implements: 0.8,
+  contains: 0.3,
+};
+
 export function detectCommunities(nodes: GraphNode[], edges: GraphEdge[], _resolution = 1.0): Community[] {
-  const byDomain = new Map<string, GraphNode[]>();
+  const byDirectory = new Map<string, GraphNode[]>();
   for (const node of nodes) {
-    const key = node.domain ?? 'default';
-    const arr = byDomain.get(key) ?? [];
+    const key = directoryKey(node);
+    const arr = byDirectory.get(key) ?? [];
     arr.push(node);
-    byDomain.set(key, arr);
+    byDirectory.set(key, arr);
   }
 
   const communities: Community[] = [];
   let i = 0;
-  for (const [domain, members] of byDomain.entries()) {
+  for (const [directory, members] of byDirectory.entries()) {
     const memberIds = new Set(members.map((m) => m.id));
-    const internal = edges.filter((e) => memberIds.has(e.from_id) && memberIds.has(e.to_id)).length;
-    const possible = Math.max(1, members.length * (members.length - 1));
+    const { cohesion, couplingWarnings } = computeCohesion(memberIds, edges, byDirectory, nodes);
     communities.push({
       id: `community_${i++}`,
-      label: `${domain}:${dominantType(members)}`,
+      label: `${directory}:${dominantType(members)}`,
       nodeIds: [...memberIds],
-      cohesion: Number((internal / possible).toFixed(3)),
-      couplingWarnings: [],
+      cohesion,
+      couplingWarnings,
     });
   }
-  return communities;
+  return communities.sort((a, b) => b.nodeIds.length - a.nodeIds.length);
+}
+
+function directoryKey(node: GraphNode): string {
+  const file = node.source_file?.replace(/\\/g, '/') ?? '';
+  if (!file) return 'root';
+  const dir = path.dirname(file).replace(/\\/g, '/');
+  return dir && dir !== '.' ? dir : 'root';
+}
+
+function computeCohesion(
+  memberIds: Set<string>,
+  edges: GraphEdge[],
+  byDirectory: Map<string, GraphNode[]>,
+  allNodes: GraphNode[],
+): { cohesion: number; couplingWarnings: Array<{ targetCommunityId: string; edgeCount: number }> } {
+  const nodeToDirectory = new Map<string, string>();
+  for (const [directory, members] of byDirectory.entries()) {
+    for (const member of members) nodeToDirectory.set(member.id, directory);
+  }
+
+  let internalWeight = 0;
+  let touchingWeight = 0;
+  const outgoingByDirectory = new Map<string, number>();
+
+  for (const edge of edges) {
+    const weight = EDGE_WEIGHTS[edge.type];
+    if (!weight) continue;
+    const fromInside = memberIds.has(edge.from_id);
+    const toInside = memberIds.has(edge.to_id);
+    if (!fromInside && !toInside) continue;
+
+    touchingWeight += weight;
+    if (fromInside && toInside) {
+      internalWeight += weight;
+    } else if (fromInside && !toInside) {
+      const targetDirectory = nodeToDirectory.get(edge.to_id) ?? 'external';
+      outgoingByDirectory.set(targetDirectory, (outgoingByDirectory.get(targetDirectory) ?? 0) + 1);
+    }
+  }
+
+  const couplingWarnings = [...outgoingByDirectory.entries()]
+    .map(([targetCommunityId, edgeCount]) => ({ targetCommunityId, edgeCount }))
+    .sort((a, b) => b.edgeCount - a.edgeCount)
+    .slice(0, 5);
+
+  const isolatedBonus = allNodes.length > 0 && touchingWeight === 0 ? 0 : undefined;
+  const cohesion = touchingWeight === 0
+    ? (isolatedBonus ?? 0)
+    : Number((internalWeight / touchingWeight).toFixed(3));
+  return { cohesion, couplingWarnings };
 }
 
 function dominantType(nodes: GraphNode[]): string {

@@ -37,7 +37,8 @@ Codebase hien tai da co dung huong o muc foundation:
 
 - local-first SQLite graph
 - pipeline ro rang `01_sync -> 08_report`
-- co `canonical/exploratory`, `provenance`, `GraphQueryEngine`, MCP/CLI/wiki surfaces
+- co `canonical/exploratory`, `provenance`, `GraphQueryEngine`,- MCP/CLI/wiki/VS Code la consumer surfaces
+- Manual control buttons (Rescan, Post-Process) provide user-gated graph management.
 - co seed cho governance va authority edges
 
 Nhung repo hien tai van o muc **pre-P0 foundation**, chua dat muc "trusted execution model for reasoning".
@@ -155,7 +156,7 @@ Dieu nay xung dot voi tinh than cua spec:
 - inferred relations khong nen duoc xem la canonical truth
 - `nodeTypeRegistry` da co khai niem `isCanonical`, nhung builder khong ton trong khai niem do
 
-Day la semantic bug nen tang, khong chi la missing feature.
+Day la semantic bug nen tang, khong ci la missing feature.
 
 ### Gap D - Edge taxonomy chua ton tai dung nghia
 
@@ -721,7 +722,7 @@ Anh huong:
 | FE-BE mapping | `TSReactAdapter.ts` | Weak | Regex-level only | P1 |
 | Promotion rules | None | Missing | Co the defer | P2 |
 | External feedback layer | None | Missing | Co the defer | P2 |
-| VS Code usability / ops | extension + repo tooling | Weak | Co the defer sau core | P2 |
+| VS Code usability / ops | extension + repo tooling | Improved | Manual wiki controls added (Rescan, Post-Process) | P2 |
 
 ## 11. Final Position
 

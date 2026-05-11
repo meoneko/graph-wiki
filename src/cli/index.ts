@@ -5,6 +5,7 @@ import { runPipeline } from '../pipeline/run.js';
 import { startWatch } from '../pipeline/watch.js';
 import { getDiff } from '../pipeline/gitDiff.js';
 import { buildImpactReport } from '../pipeline/impactReport.js';
+import { runPostProcess } from '../pipeline/postprocess.js';
 import { loadConfig, resolveDbPath } from '../pipeline/config.js';
 import { getDB } from '../storage/GraphDB.js';
 import { getTrustedQueryService } from '../core/graph/query/TrustedQueryService.js';
@@ -46,6 +47,7 @@ function help(): void {
   ask <question> [--workspace <id>]
   impact [--diff <base..head>] [--workspace <id>]
   wiki [workspace]
+  postprocess [workspace]
   serve-mcp
   stats [workspace]
   search <query> [--workspace <id>]
@@ -115,8 +117,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'postprocess') {
+    const workspace = rest[0]?.startsWith('--') ? undefined : rest[0];
+    const ws = await resolveWorkspace(workspace);
+    const result = await runPostProcess(getDB(resolveDbPath()), ws);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
   if (command === 'serve-mcp') {
-    await import('../mcp/server.js');
+    const { startMcpServer } = await import('../mcp/server.js');
+    await startMcpServer();
     return;
   }
 

@@ -10,6 +10,7 @@ const aiProv = { source: 'ai', artifact_source: 'f', producer_stage: 'enrich', t
 function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, 'id' | 'graph_kind' | 'confidence_band'>): GraphNode {
   return {
     workspace: 'w1', project: 'p1', label: overrides.id, type: 'function',
+    roles: [], language: 'typescript',
     trust_level: 'AUTHORITATIVE', provenance: parserProv,
     ...overrides,
   };
@@ -177,10 +178,10 @@ describe('GraphValidator acceptance', () => {
   });
 
   describe('6. Forbidden structural patterns', () => {
-    const feNode = makeNode({ id: 'fe', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'ui_component' });
-    const dbNode = makeNode({ id: 'db', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'repository' });
-    const routeNode = makeNode({ id: 'route', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'api_controller' });
-    const serviceNode = makeNode({ id: 'svc', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'service' });
+    const feNode = makeNode({ id: 'fe', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'function', roles: ['framework'], lang_meta: { semantic_role: 'ui_component' } });
+    const dbNode = makeNode({ id: 'db', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'class', roles: ['domain'], lang_meta: { semantic_role: 'repository' } });
+    const routeNode = makeNode({ id: 'route', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'method', roles: ['entrypoint', 'http_handler'], framework: 'aspnet-mvc' });
+    const serviceNode = makeNode({ id: 'svc', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'class', roles: ['domain'], lang_meta: { semantic_role: 'service' } });
 
     it('flags FE → DB direct call', () => {
       const edge = makeEdge({ id: 'e1', from_id: 'fe', to_id: 'db', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'calls' });

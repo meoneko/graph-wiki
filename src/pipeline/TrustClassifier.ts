@@ -16,7 +16,9 @@ export class TrustClassifier {
         const e = extractor.toLowerCase();
 
         // 1. Authoritative: AST/parser-derived facts with source locations.
-        if (e.includes('parser-static') || e.includes('parser-verified') || e === 'csharp_tree_sitter') {
+        // Current behavior is unchanged for existing extractors; the suffix convention
+        // lets future tree-sitter languages become canonical without editing this file.
+        if (e.endsWith('_tree_sitter') || e.includes('parser-static') || e.includes('parser-verified')) {
             return {
                 trust_level: 'AUTHORITATIVE',
                 decision_status: 'OK',
@@ -24,7 +26,7 @@ export class TrustClassifier {
         }
 
         // 2. Derived: Results of cross-file analysis or composition rules
-        if (e.includes('analysis') || e.includes('composition') || e.includes('enrichment') || e === 'ts_react_adapter') {
+        if (e.endsWith('_legacy_fallback') || e.endsWith('_regex') || e.includes('analysis') || e.includes('composition') || e.includes('enrichment') || e === 'ts_react_adapter') {
             return {
                 trust_level: 'DERIVED',
                 decision_status: 'OK',

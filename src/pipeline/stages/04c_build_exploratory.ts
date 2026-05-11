@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { GraphEdge, GraphNode, NormalizedFact, Provenance } from '../../core/types.js';
 import { GraphDB } from '../../storage/GraphDB.js';
+import { buildNodeBySymbol, callMetadata, GraphNodeIndex, resolveCalledSymbol } from './graphResolution.js';
 
 function sid(...parts: string[]): string {
     return createHash('sha1').update(parts.join('|')).digest('hex');
@@ -28,6 +29,9 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
         project: f.project,
         label: f.symbol,
         type: f.candidate_type,
+        roles: f.roles,
+        language: f.language,
+        framework: f.framework,
         graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS',
         trust_level: 'EXPLORATORY',
@@ -39,33 +43,31 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
             http_path: f.http_path,
             domain: f.domain,
             lang_meta: f.lang_meta,
-            is_entrypoint: f.is_entrypoint,
         },
         updated_at: new Date().toISOString(),
     }));
 
-    const nodeBySymbol = new Map(nodes.map((n) => [n.symbol ?? n.label, n]));
+    const nodeBySymbol = buildNodeBySymbol(nodes);
+    const nodeIndex = new GraphNodeIndex(nodes);
     const edges: GraphEdge[] = [];
 
     for (const f of exploratoryFacts) {
         const from = nodeBySymbol.get(f.symbol);
         if (!from) continue;
         for (const called of f.called_symbols ?? []) {
-            const to = nodeBySymbol.get(called);
+            const to = resolveCalledSymbol(called, nodes, nodeBySymbol, nodeIndex);
             if (!to) continue;
             edges.push({
-                id: `edge:${sid(from.id, to.id, 'exploratory_dependency')}`,
+                id: `edge:${sid(from.id, to.id, 'calls', 'exploratory')}`,
                 workspace: workspaceId,
                 from_id: from.id,
                 to_id: to.id,
-                type: 'exploratory_dependency',
+                type: 'calls',
                 graph_kind: 'exploratory',
                 confidence_band: 'AMBIGUOUS',
                 trust_level: 'EXPLORATORY',
                 metadata: {
-                    fromSymbol: from.symbol,
-                    toSymbol: to.symbol,
-                    flow_type: 'control'
+                    ...callMetadata(called, from, to, 'control')
                 },
                 provenance: mapProvenance(f, 'buildExploratoryGraph'),
                 updated_at: new Date().toISOString(),
@@ -73,10 +75,8 @@ export async function buildExploratoryGraph(facts: NormalizedFact[], workspaceId
         }
     }
 
-    db.transaction(() => {
-        nodes.forEach((n) => db.upsertNode(n));
-        edges.forEach((e) => db.upsertEdge(e));
-    });
+    db.upsertNodes(nodes);
+    db.upsertEdges(edges);
 
     return { nodes, edges };
 }
