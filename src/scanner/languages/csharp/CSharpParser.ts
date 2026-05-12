@@ -1,21 +1,31 @@
-import type Parser from 'tree-sitter';
-import CSharpGrammar from 'tree-sitter-c-sharp';
-import { TreeSitterWrapper } from '../../core/TreeSitterWrapper.js';
+﻿import type { Node } from 'web-tree-sitter';
+import { WebTreeSitterWrapper } from '../../core/WebTreeSitterWrapper.js';
 import type { ILanguageParser, ImportDecl, ParsedFile, ParsedSymbol, CalledSymbol } from '../../core/ILanguageParser.js';
 import { CSHARP_BUILTIN_SYMBOLS } from './builtins.js';
 
-function text(node: Parser.SyntaxNode, source: string): string {
+function text(node: Node, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
 }
 
 export class CSharpParser implements ILanguageParser {
+  readonly backendId = 'csharp_tree_sitter';
   readonly language = 'csharp';
   readonly fileExtensions = ['.cs'];
+  readonly isAuthoritative = true;
 
-  private readonly wrapper = new TreeSitterWrapper(CSharpGrammar);
+  private wrapperPromise: Promise<WebTreeSitterWrapper> | undefined;
 
-  parse(sourceCode: string, filePath: string): ParsedFile {
-    const tree = this.wrapper.parse(sourceCode);
+  private getWrapper(): Promise<WebTreeSitterWrapper> {
+    this.wrapperPromise ??= WebTreeSitterWrapper.create({
+      backendId: this.backendId,
+      wasmFile: 'tree-sitter-c-sharp.wasm',
+    });
+    return this.wrapperPromise;
+  }
+
+  async parse(sourceCode: string, filePath: string): Promise<ParsedFile> {
+    const wrapper = await this.getWrapper();
+    const tree = wrapper.parse(sourceCode);
     const root = tree.rootNode;
     const symbols: ParsedSymbol[] = [
       ...this.extractTopLevelStatements(root, sourceCode),
@@ -36,17 +46,17 @@ export class CSharpParser implements ILanguageParser {
     };
   }
 
-  // ── Qualified name resolution ────────────────────────────────────────────
+  // â”€â”€ Qualified name resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private resolveQualifiedInfo(
-    node: Parser.SyntaxNode,
+    node: Node,
     leafName: string,
     source: string,
   ): { qualifiedName: string; containingClass?: string; namespace?: string } {
     const parts: string[] = [leafName];
     let containingClass: string | undefined;
     let namespace: string | undefined;
-    let cur: Parser.SyntaxNode | null = node.parent;
+    let cur: Node | null = node.parent;
 
     while (cur) {
       if (
@@ -77,10 +87,14 @@ export class CSharpParser implements ILanguageParser {
     return { qualifiedName: parts.join('.'), containingClass, namespace };
   }
 
-  // ── Annotation extraction (correct: only preceding sibling attribute_list) ─
+  // â”€â”€ Annotation extraction (correct: only preceding sibling attribute_list) â”€
 
-  private getMethodAnnotations(methodNode: Parser.SyntaxNode, source: string): string[] {
+  private getMethodAnnotations(methodNode: Node, source: string): string[] {
     const annotations: string[] = [];
+    annotations.push(...methodNode.namedChildren
+      .filter((n) => n.type === 'attribute_list')
+      .flatMap((n) => this.collectByType(n, 'attribute').map((a) => text(a, source))));
+
     let sibling = methodNode.previousNamedSibling;
     while (sibling !== null && sibling.type === 'attribute_list') {
       const attrs = this.collectByType(sibling, 'attribute').map((a) => text(a, source));
@@ -90,9 +104,9 @@ export class CSharpParser implements ILanguageParser {
     return annotations;
   }
 
-  // ── Extractors ───────────────────────────────────────────────────────────
+  // â”€â”€ Extractors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  private extractTopLevelStatements(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractTopLevelStatements(root: Node, source: string): ParsedSymbol[] {
     const globalStmts = root.namedChildren.filter((n) => n.type === 'global_statement');
     if (globalStmts.length === 0) return [];
 
@@ -115,14 +129,14 @@ export class CSharpParser implements ILanguageParser {
     }];
   }
 
-  private extractControllerActions(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractControllerActions(root: Node, source: string): ParsedSymbol[] {
     return this.collectByType(root, 'method_declaration')
       .map((m) => this.toMethodSymbol(m, source))
       .filter((s): s is ParsedSymbol => s !== undefined)
       .filter((s) => s.annotations.some((a) => /Http(Get|Post|Put|Delete|Patch)/i.test(a)));
   }
 
-  private extractMinimalApiRoutes(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractMinimalApiRoutes(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     for (const inv of this.collectByType(root, 'invocation_expression')) {
       const call = text(inv, source);
@@ -147,7 +161,7 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private extractUseCases(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractUseCases(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     for (const c of this.collectByType(root, 'class_declaration')) {
       const nameNode = c.childForFieldName('name');
@@ -173,7 +187,7 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private extractDTOs(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractDTOs(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     const nodes = [
       ...this.collectByType(root, 'record_declaration'),
@@ -203,7 +217,7 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private extractExtensionMethods(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractExtensionMethods(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     for (const m of this.collectByType(root, 'method_declaration')) {
       const body = text(m, source);
@@ -238,7 +252,7 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private extractPartialClasses(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractPartialClasses(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
     for (const c of this.collectByType(root, 'class_declaration')) {
       const modifiers = this.collectByType(c, 'modifier').map((m) => text(m, source));
@@ -266,7 +280,7 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private extractClasses(root: Parser.SyntaxNode, source: string): ParsedSymbol[] {
+  private extractClasses(root: Node, source: string): ParsedSymbol[] {
     return this.collectByType(root, 'class_declaration')
       .filter((c) => {
         // Skip classes already handled by more specific extractors
@@ -301,15 +315,15 @@ export class CSharpParser implements ILanguageParser {
       });
   }
 
-  private extractUsings(root: Parser.SyntaxNode, source: string): ImportDecl[] {
+  private extractUsings(root: Node, source: string): ImportDecl[] {
     return this.collectByType(root, 'using_directive').map((u) => ({
       module: text(u, source).replace(/^using\s+/, '').replace(/;$/, '').trim(),
     }));
   }
 
-  // ── Symbol helpers ───────────────────────────────────────────────────────
+  // â”€â”€ Symbol helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  private toMethodSymbol(node: Parser.SyntaxNode, source: string): ParsedSymbol | undefined {
+  private toMethodSymbol(node: Node, source: string): ParsedSymbol | undefined {
     const nameNode = node.childForFieldName('name');
     if (!nameNode) return undefined;
     const methodName = text(nameNode, source);
@@ -334,7 +348,7 @@ export class CSharpParser implements ILanguageParser {
     };
   }
 
-  private extractCalledSymbols(node: Parser.SyntaxNode, source: string): CalledSymbol[] {
+  private extractCalledSymbols(node: Node, source: string): CalledSymbol[] {
     const out: CalledSymbol[] = [];
     const seen = new Set<string>();
     for (const inv of this.collectByType(node, 'invocation_expression')) {
@@ -352,9 +366,9 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 
-  private collectByType(root: Parser.SyntaxNode, type: string): Parser.SyntaxNode[] {
-    const out: Parser.SyntaxNode[] = [];
-    const stack: Parser.SyntaxNode[] = [root];
+  private collectByType(root: Node, type: string): Node[] {
+    const out: Node[] = [];
+    const stack: Node[] = [root];
     while (stack.length > 0) {
       const n = stack.pop()!;
       if (n.type === type) out.push(n);
@@ -366,3 +380,4 @@ export class CSharpParser implements ILanguageParser {
     return out;
   }
 }
+

@@ -18,15 +18,27 @@ function mapProvenance(fact: NormalizedFact, stage: string): Provenance {
     };
 }
 
-function isSupportedCodeFile(file: string): boolean {
-    return /\.(cs|ts|tsx|js|jsx)$/i.test(file) && !/\.md$/i.test(file);
-}
+// All extractor IDs whose facts are promoted to canonical graph.
+// Trust classification (TrustClassifier) already gates which extractors earn AUTHORITATIVE,
+// but this set makes the canonical promotion explicit and auditable.
+const AUTHORITATIVE_EXTRACTOR_IDS = new Set([
+    'csharp_tree_sitter',
+    'ts_tree_sitter_parser',
+    'json_config_parser',
+    'yaml_config_parser',
+    'toml_config_parser',
+    'env_parser',
+    'sql_schema_parser',
+    'proto_parser',
+    'openapi_parser',
+]);
 
 function isAuthoritativeCanonicalFact(fact: NormalizedFact): boolean {
+    if (fact.trust_level !== 'AUTHORITATIVE') return false;
     const extractor = String(fact.lang_meta?.extractor ?? fact.extractor ?? '').toLowerCase();
-    return fact.trust_level === 'AUTHORITATIVE'
-        && isSupportedCodeFile(fact.source_file)
-        && (extractor.includes('parser-static') || extractor.includes('parser-verified') || extractor === 'csharp_tree_sitter');
+    return AUTHORITATIVE_EXTRACTOR_IDS.has(extractor)
+        || extractor.includes('parser-static')
+        || extractor.includes('parser-verified');
 }
 
 export async function buildCanonicalGraph(facts: NormalizedFact[], workspaceId: string, db: GraphDB): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {

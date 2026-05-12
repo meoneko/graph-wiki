@@ -8,6 +8,10 @@
 const tools: McpToolDefinition[] = [];
 
 export function registerTool(tool: McpToolDefinition): void {
+  const existing = tools.findIndex((entry) => entry.name === tool.name);
+  if (existing >= 0) {
+    tools.splice(existing, 1);
+  }
   tools.push(tool);
 }
 

@@ -55,7 +55,9 @@ export function registerWikiTools(): void {
       }
       const graph = await engine.getVisibleGraph(operation, input.mode as QueryMode);
       await generateWiki(input.workspaceId, graph.nodes, graph.edges, db, config);
-      return stats;
+      return QueryResultFactory.withMetadata(stats, {
+        onboarding_sections: ['project overview', 'entrypoints', 'important flows', 'where-to-start reading', 'graph quality summary', 'trust distribution'],
+      });
     },
   });
 }

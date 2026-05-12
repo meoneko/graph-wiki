@@ -8,6 +8,19 @@ import { registerTool } from './runtime.js';
 
 export function registerBuildTools(): void {
   registerTool({
+    name: 'list_workspaces',
+    description: 'List all configured workspaces',
+    inputSchema: {},
+    handler: async () => {
+      const { loadConfig } = await import('../../pipeline/config.js');
+      const config = await loadConfig();
+      return {
+        workspaces: config.workspaces.map((w) => ({ id: w.id, name: w.name ?? w.id, projects: w.projects })),
+      };
+    },
+  });
+
+  registerTool({
     name: 'build_graph',
     description: 'Run full pipeline build for a workspace',
     inputSchema: { workspaceId: 'string' },

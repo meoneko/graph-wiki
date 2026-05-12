@@ -16,6 +16,7 @@ export interface VerifyReport {
   processCoverage: number;
   issues: string[];
   validationIssues?: ValidationIssue[];
+  graphQualityIssues?: ValidationIssue[];
   governanceIssues?: GovernanceIssue[];
 }
 
@@ -154,6 +155,7 @@ export async function verifyGraph(
     processCoverage: Number(processCoverage.toFixed(4)),
     issues,
     validationIssues: graphValidation.issues,
+    graphQualityIssues: graphValidation.issues,
     governanceIssues: govValidation.issues,
   };
 }

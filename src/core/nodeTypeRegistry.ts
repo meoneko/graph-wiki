@@ -1,4 +1,13 @@
-﻿export type NodeCategory = 'entrypoint' | 'handler' | 'domain' | 'contract' | 'flow';
+export type NodeCategory =
+  | 'entrypoint'
+  | 'handler'
+  | 'domain'
+  | 'contract'
+  | 'flow'
+  | 'config'
+  | 'infrastructure'
+  | 'schema'
+  | 'document';
 
 export interface NodeTypeDefinition {
   id: string;
@@ -51,5 +60,30 @@ nodeTypeRegistry
   .register({ id: 'csharp_dto', category: 'contract', isCanonical: true, isEntrypoint: false, languages: ['csharp'] })
   .register({ id: 'csharp_interface', category: 'contract', isCanonical: false, isEntrypoint: false, languages: ['csharp'] })
   .register({ id: 'csharp_class', category: 'domain', isCanonical: false, isEntrypoint: false, languages: ['csharp'] })
+  // Reserved for future CST-backed TypeScript route/API extraction.
   .register({ id: 'ts_route', category: 'entrypoint', isCanonical: true, isEntrypoint: true, languages: ['typescript', 'javascript'] })
-  .register({ id: 'ts_api_endpoint', category: 'handler', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] });
+  .register({ id: 'ts_api_endpoint', category: 'handler', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
+  .register({ id: 'ts_component', category: 'handler', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
+  .register({ id: 'ts_hook', category: 'domain', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
+  .register({ id: 'ts_function', category: 'domain', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
+  .register({ id: 'ts_import', category: 'contract', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
+  .register({ id: 'appsettings_section', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['json'] })
+  .register({ id: 'appsettings_key', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['json'] })
+  .register({ id: 'env_key', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['env'] })
+  .register({ id: 'yaml_config_key', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['yaml'] })
+  .register({ id: 'json_config_key', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['json'] })
+  .register({ id: 'toml_config_key', category: 'config', isCanonical: true, isEntrypoint: false, languages: ['toml'] })
+  .register({ id: 'sql_table', category: 'schema', isCanonical: true, isEntrypoint: false, languages: ['sql'] })
+  .register({ id: 'sql_view', category: 'schema', isCanonical: true, isEntrypoint: false, languages: ['sql'] })
+  .register({ id: 'sql_migration', category: 'schema', isCanonical: true, isEntrypoint: false, languages: ['sql'] })
+  .register({ id: 'dockerfile_stage', category: 'infrastructure', isCanonical: true, isEntrypoint: false, languages: ['dockerfile'] })
+  .register({ id: 'terraform_resource', category: 'infrastructure', isCanonical: true, isEntrypoint: false, languages: ['terraform'] })
+  .register({ id: 'k8s_service', category: 'infrastructure', isCanonical: true, isEntrypoint: false, languages: ['yaml'] })
+  .register({ id: 'openapi_path', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['yaml', 'json'] })
+  .register({ id: 'openapi_operation', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['yaml', 'json'] })
+  .register({ id: 'openapi_schema', category: 'schema', isCanonical: true, isEntrypoint: false, languages: ['yaml', 'json'] })
+  .register({ id: 'graphql_type', category: 'schema', isCanonical: true, isEntrypoint: false, languages: ['graphql'] })
+  .register({ id: 'graphql_query', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['graphql'] })
+  .register({ id: 'graphql_mutation', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['graphql'] })
+  .register({ id: 'doc_section', category: 'document', isCanonical: false, isEntrypoint: false, languages: ['markdown'] })
+  .register({ id: 'flow_domain', category: 'flow', isCanonical: false, isEntrypoint: false, defaultExecutionRole: 'informational', languages: ['*'] });

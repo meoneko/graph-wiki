@@ -1,5 +1,4 @@
-﻿import Parser from 'tree-sitter';
-
+﻿
 export type SymbolKind =
   | 'function' | 'method' | 'class' | 'interface'
   | 'constructor' | 'property' | 'field' | 'namespace'
@@ -19,11 +18,13 @@ export interface ParameterDef {
 export interface ImportDecl {
   module: string;
   symbols?: string[];
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface ParseError {
   message: string;
-  node?: Parser.SyntaxNode;
+  node?: unknown;
 }
 
 export interface ParsedSymbol {
@@ -53,7 +54,10 @@ export interface ParsedFile {
 }
 
 export interface ILanguageParser {
+  readonly backendId: string;
   readonly language: string;
   readonly fileExtensions: string[];
-  parse(sourceCode: string, filePath: string): ParsedFile;
+  /** Diagnostics-only; trust is classified from extractor IDs. */
+  readonly isAuthoritative: boolean;
+  parse(sourceCode: string, filePath: string): Promise<ParsedFile>;
 }

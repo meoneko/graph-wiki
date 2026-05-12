@@ -1,12 +1,15 @@
 ﻿import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import fg from 'fast-glob';
+import path from 'node:path';
 import type { CandidateRecord, RejectedRecord } from '../../core/types.js';
 import type { WorkspaceConfig, KnowledgeConfig, ProjectConfig } from '../config.js';
 import { getWorkspaceProjects } from '../config.js';
 import { GraphDB } from '../../storage/GraphDB.js';
 import { globalAdapterRegistry } from '../adapters/index.js';
 import { canonicalizePath } from '../../storage/pathUtils.js';
+import { createGitStyleIgnoreFilter } from '../fileFilters.js';
+import { buildImportMap, isImportParticipating, loadImportMap } from '../importMap.js';
 
 function sha1(input: string): string {
   return createHash('sha1').update(input).digest('hex');
@@ -19,15 +22,34 @@ export interface ExtractOptions {
 
 async function listProjectFiles(project: ProjectConfig): Promise<string[]> {
   const patterns = project.sources?.include ?? ['**/*.cs'];
-  return fg(patterns, {
+  const files = await fg(patterns, {
     cwd: project.path,
     absolute: true,
-    ignore: project.sources?.exclude ?? ['**/node_modules/**', '**/.git/**', '**/bin/**', '**/obj/**'],
+    ignore: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/bin/**',
+      '**/obj/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.next/**',
+      '**/.cache/**',
+      ...(project.sources?.exclude ?? []),
+    ],
   });
+  const ignoreFilter = createGitStyleIgnoreFilter(project.path);
+  return files.filter((file) => !ignoreFilter.isIgnored(path.relative(project.path, file)));
 }
 
-async function getFilesToExtract(project: ProjectConfig, db: GraphDB, options: ExtractOptions): Promise<string[]> {
+async function getFilesToExtract(project: ProjectConfig, config: KnowledgeConfig, db: GraphDB, options: ExtractOptions): Promise<string[]> {
   const files = await listProjectFiles(project);
+  const existingImportMap = await loadImportMap(config, project.id);
+  const importMapNeedsRebuild = !options.incremental || !options.changedFiles?.length || options.changedFiles
+    .map((file) => canonicalizePath(file))
+    .some((file) => isImportParticipating(existingImportMap, file));
+  if (importMapNeedsRebuild) {
+    await buildImportMap(project, config, files);
+  }
 
   if (!options.incremental) {
     const normalizedFiles: string[] = [];
@@ -67,7 +89,7 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
   const rejects: RejectedRecord[] = [];
 
   for (const project of projects) {
-    const changedFiles = await getFilesToExtract(project, db, options);
+    const changedFiles = await getFilesToExtract(project, config, db, options);
     if (changedFiles.length === 0) continue;
 
     const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path };

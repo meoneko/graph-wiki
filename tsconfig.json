@@ -21,6 +21,7 @@
   "exclude": [
     "dist",
     "node_modules",
-    "packages"
+    "packages",
+    "src/**/__fixtures__/**"
   ]
 }

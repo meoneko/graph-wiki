@@ -25,6 +25,8 @@ export type TrustLevel = 'AUTHORITATIVE' | 'DERIVED' | 'EXPLORATORY' | 'MIXED';
 
 export type ResponseConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
 
+export type NodeRole = 'entrypoint' | 'http_handler' | 'event_handler' | 'domain' | 'contract' | 'config' | 'infra';
+
 export interface Provenance {
   source: 'parser' | 'analysis' | 'ai' | 'user';
   artifact_source: string;
@@ -55,6 +57,10 @@ export const EdgeType = {
   returns: 'returns',
   maps_to: 'maps_to',
   binds_to: 'binds_to',
+  configures: 'configures',
+  defines_schema: 'defines_schema',
+  documents: 'documents',
+  deploys: 'deploys',
   // Authority
   uses_authority: 'uses_authority',
   node_uses_authority: 'node_uses_authority',
@@ -73,7 +79,20 @@ export interface EvidenceSpan {
   line_start: number;
   line_end: number;
   excerpt: string;
-  role: 'source' | 'route' | 'call' | 'controller' | 'usecase' | 'authority' | 'dto';
+  role:
+    | 'source'
+    | 'route'
+    | 'call'
+    | 'controller'
+    | 'usecase'
+    | 'authority'
+    | 'dto'
+    | 'config_key'
+    | 'config_section'
+    | 'schema_field'
+    | 'infra_resource'
+    | 'contract_endpoint'
+    | 'doc_section';
 }
 
 export interface AdapterContext {
@@ -101,6 +120,9 @@ export interface CandidateRecord {
   http_method?: string;
   http_path?: string;
   annotations?: string[];
+  roles?: NodeRole[];
+  framework?: string;
+  language?: string;
   lang_meta?: Record<string, unknown>;
   domain?: string;
 }

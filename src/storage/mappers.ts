@@ -70,6 +70,10 @@ export function mapNodeToDB(node: GraphNode): any {
     const { confidence_band, provenance, metadata, ...rest } = node;
     return {
         ...rest,
+        // Explicit null-coalesce for optional fields so better-sqlite3 never sees
+        // a missing named parameter when the property is absent or undefined.
+        source_file: node.source_file ?? null,
+        symbol: node.symbol ?? null,
         confidence: mapBandToConfidence(confidence_band),
         provenance: JSON.stringify(provenance),
         metadata: JSON.stringify(metadata || {}),

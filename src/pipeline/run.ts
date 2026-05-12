@@ -1,4 +1,5 @@
-﻿import { loadConfig, getWorkspace, resolveDbPath, resolveOutputPath } from './config.js';
+﻿import { loadConfig, getWorkspace, getWorkspaceProjects, resolveDbPath, resolveOutputPath } from './config.js';
+import { loadImportMap, type ImportMapArtifact } from './importMap.js';
 import { getDB } from '../storage/GraphDB.js';
 import { TrustEventEmitter } from '../core/observability/TrustEventEmitter.js';
 import { syncSources } from './stages/01_sync.js';
@@ -7,6 +8,7 @@ import { validateFacts } from './stages/03_validate.js';
 import { buildCanonicalGraph } from './stages/04a_build_canonical.js';
 import { buildDerivedGraph } from './stages/04b_build_derived.js';
 import { buildExploratoryGraph } from './stages/04c_build_exploratory.js';
+import { buildFlowGraph } from './stages/04d_build_flows.js';
 import { enrichFacts } from './stages/05_enrich.js';
 import { verifyGraph } from './stages/06_verify.js';
 import { generateWiki } from './stages/07_wiki.js';
@@ -27,6 +29,7 @@ export const PipelineStages = {
   buildCanonicalGraph,
   buildDerivedGraph,
   buildExploratoryGraph,
+  buildFlowGraph,
   enrichFacts,
   writeGraphArtifacts,
   verifyGraph,
@@ -62,16 +65,31 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
 
   // 3. Build Multi-Layer Graph
   const canonical = await PipelineStages.buildCanonicalGraph(validated.facts, workspace.id, db);
-  const derived = await PipelineStages.buildDerivedGraph(validated.facts, workspace.id, db);
+
+  // Load per-project importMaps so derived stage can create module-level `imports` edges.
+  const projects = getWorkspaceProjects(config, workspace.id);
+  const importMaps = (await Promise.all(projects.map((p) => loadImportMap(config, p.id))))
+    .filter((m): m is ImportMapArtifact => m !== undefined);
+
+  const derived = await PipelineStages.buildDerivedGraph(validated.facts, workspace.id, db, {
+    importMaps,
+    canonicalNodes: canonical.nodes,
+  });
   const exploratory = await PipelineStages.buildExploratoryGraph(validated.facts, workspace.id, db);
 
   const allNodes = [...canonical.nodes, ...derived.nodes, ...exploratory.nodes];
   const allEdges = [...canonical.edges, ...derived.edges, ...exploratory.edges];
-  const currentNodes = _options.incremental ? db.getAllNodesByWorkspace(workspace.id) : allNodes;
-  const currentEdges = _options.incremental ? db.getEdgesByWorkspace(workspace.id) : allEdges;
 
-  // 4. Enrich & Wiki
-  // 5. Verify
+  // 4. Derive domain metadata + flow_domain nodes + belongs_to_flow edges.
+  //    Must run BEFORE writeGraphArtifacts so artifacts, wiki, and verify all see flow nodes.
+  await PipelineStages.buildFlowGraph(allNodes, allEdges, workspace.id, db);
+
+  // Always read currentNodes/currentEdges from DB so they include flow nodes regardless of
+  // incremental mode. After buildFlowGraph the DB is the canonical source of truth.
+  const currentNodes = db.getAllNodesByWorkspace(workspace.id);
+  const currentEdges = db.getEdgesByWorkspace(workspace.id);
+
+  // 5. Write artifacts & verify
   await PipelineStages.writeGraphArtifacts(db, workspace.id);
   const report = await PipelineStages.verifyGraph(currentNodes, currentEdges, workspace, db, config);
 

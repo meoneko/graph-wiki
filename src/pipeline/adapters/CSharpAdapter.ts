@@ -16,7 +16,7 @@ export class CSharpAdapter implements IProjectAdapter {
   async parse(paths: string[]): Promise<{ paths: string[]; files: Array<{ filePath: string; symbols: ParsedSymbol[] }> }> {
     const files = await Promise.all(paths.map(async (p) => {
       const source = await readFile(p, 'utf-8');
-      const parsed = this.parser.parse(source, p);
+      const parsed = await this.parser.parse(source, p);
       return { filePath: p, symbols: parsed.symbols };
     }));
     return { paths, files };
@@ -56,7 +56,7 @@ export class CSharpAdapter implements IProjectAdapter {
       line_start: symbol.startLine,
       line_end: symbol.endLine,
       excerpt: `${symbol.name} (${path.basename(filePath)})`,
-      role: 'source',
+      role: this.roleForType(nodeType, symbol),
     };
 
     return {
@@ -89,7 +89,18 @@ export class CSharpAdapter implements IProjectAdapter {
     if (symbol.annotations.some((a) => /Http(Get|Post|Put|Delete|Patch)/i.test(a))) return 'csharp_controller_action';
     if (symbol.name.match(/^Map(Get|Post|Put|Delete|Patch):/)) return 'csharp_minimal_api';
     if (symbol.kind === 'interface') return 'csharp_interface';
+    const semanticRole = this.inferSemanticRole(symbol);
+    if (semanticRole === 'usecase') return 'csharp_usecase';
+    if (semanticRole === 'dto') return 'csharp_dto';
     return 'csharp_class';
+  }
+
+  private roleForType(candidateType: string, symbol: ParsedSymbol): EvidenceSpan['role'] {
+    const semanticRole = this.inferSemanticRole(symbol);
+    if (candidateType.includes('controller')) return 'controller';
+    if (semanticRole === 'usecase') return 'usecase';
+    if (semanticRole === 'dto') return 'dto';
+    return 'source';
   }
 
   private inferSemanticRole(symbol: ParsedSymbol): string | undefined {
@@ -112,3 +123,4 @@ export class CSharpAdapter implements IProjectAdapter {
     return fromName?.[2] ?? undefined;
   }
 }
+

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "code-review-graph-vscode-extension",
   "displayName": "Code Review Graph",
   "description": "VS Code integration for local code-review-graph",
@@ -16,11 +16,18 @@
       {
         "command": "crg.showBlastRadius",
         "title": "CRG: Show Blast Radius for Current File"
+      },
+      {
+        "command": "crg.showGraph",
+        "title": "CRG: Show Graph"
       }
     ]
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "elkjs": "^0.9.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

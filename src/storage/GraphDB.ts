@@ -134,10 +134,15 @@ ALTER TABLE nodes ADD COLUMN trust_level TEXT;
 ALTER TABLE edges ADD COLUMN trust_level TEXT;
 `;
 
+const MIGRATION_0004 = `
+ALTER TABLE nodes ADD COLUMN metadata TEXT;
+`;
+
 const MIGRATIONS: Array<{ version: string; sql: string }> = [
   { version: '0001_init', sql: MIGRATION_0001 },
   { version: '0002_updated_at', sql: MIGRATION_0002 },
   { version: '0003_trust_level', sql: MIGRATION_0003 },
+  { version: '0004_node_metadata', sql: MIGRATION_0004 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -222,13 +227,13 @@ export class GraphDB {
   upsertNode(node: GraphNode): void {
     const row = mapNodeToDB(node);
     this.db.prepare(`
-      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, provenance, updated_at)
-      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @provenance, @updated_at)
+      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, metadata, provenance, updated_at)
+      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @metadata, @provenance, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, project=excluded.project, label=excluded.label, type=excluded.type,
         graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level, source_file=excluded.source_file,
         symbol=excluded.symbol, http_method=excluded.http_method, http_path=excluded.http_path,
-        domain=excluded.domain, lang_meta=excluded.lang_meta, provenance=excluded.provenance, updated_at=excluded.updated_at
+        domain=excluded.domain, lang_meta=excluded.lang_meta, metadata=excluded.metadata, provenance=excluded.provenance, updated_at=excluded.updated_at
     `).run({ ...row, updated_at: node.updated_at || new Date().toISOString() });
 
     this.db.prepare(`

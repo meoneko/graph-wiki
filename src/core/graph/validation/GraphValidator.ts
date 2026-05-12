@@ -7,6 +7,7 @@ export interface ValidationIssue {
   nodeId?: string;
   edgeId?: string;
   detail: string;
+  suggestion?: string;
 }
 
 export interface GraphValidationResult {
@@ -125,6 +126,7 @@ export class GraphValidator {
             severity: 'error',
             nodeId: node.id,
             detail: `Node graph_kind=canonical but provenance.source=${node.provenance?.source ?? 'missing'} (expected parser)`,
+            suggestion: 'Move this node to derived/exploratory or attach parser-backed provenance before canonical promotion.',
           });
         }
       }
@@ -137,6 +139,7 @@ export class GraphValidator {
             severity: 'error',
             nodeId: node.id,
             detail: `Node graph_kind=derived but provenance.source=${node.provenance?.source ?? 'missing'} (expected analysis)`,
+            suggestion: "Set provenance.source='analysis' for derived nodes, or promote to canonical with a parser-backed source.",
           });
         }
       }
@@ -148,6 +151,7 @@ export class GraphValidator {
           severity: 'error',
           nodeId: node.id,
           detail: `Node ${node.id} has graph_kind=external but external workflow is not enabled`,
+          suggestion: 'Enable external workflow in knowledge.config.yaml or demote this node to exploratory.',
         });
       }
     }
@@ -220,6 +224,7 @@ export class GraphValidator {
           severity: 'error',
           edgeId: edge.id,
           detail: `Edge ${edge.id} is missing required field provenance`,
+          suggestion: 'Attach provenance with source, artifact_source, and producer_stage before emitting this edge.',
         });
       }
 
@@ -230,6 +235,7 @@ export class GraphValidator {
           severity: 'error',
           edgeId: edge.id,
           detail: `Edge type '${edge.type}' is not in the standard taxonomy`,
+          suggestion: 'Register the edge type in EdgeType before emitting this edge.',
         });
       }
 
@@ -292,6 +298,7 @@ export class GraphValidator {
           severity: 'error',
           edgeId: edge.id,
           detail: `Frontend node '${from.id}' (${from.type}) directly calls DB node '${to.id}' (${to.type})`,
+          suggestion: 'Add a service or API layer between the frontend and database nodes.',
         });
       }
 
@@ -302,6 +309,7 @@ export class GraphValidator {
           severity: 'error',
           edgeId: edge.id,
           detail: `Route/controller '${from.id}' (${from.type}) calls DB node '${to.id}' (${to.type}) without usecase layer`,
+          suggestion: 'Route should call a usecase/service, which in turn calls the repository.',
         });
       }
 
@@ -316,6 +324,7 @@ export class GraphValidator {
           severity: 'error',
           edgeId: edge.id,
           detail: `Service '${from.id}' (${from.type}) writes to '${to.id}' (${to.type}) without any authority edge`,
+          suggestion: "Add a 'uses_authority' or 'node_uses_authority' edge from this service to prove write authorisation.",
         });
       }
     }
