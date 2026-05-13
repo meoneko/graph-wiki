@@ -3,10 +3,10 @@
 export function exportNeo4j(nodes: GraphNode[], edges: GraphEdge[]): string[] {
   const statements: string[] = [];
   for (const n of nodes) {
-    statements.push(`MERGE (n:Node {id: '${n.id}'}) SET n.label='${escape(n.label)}', n.type='${escape(n.type)}';`);
+    statements.push(`MERGE (n:Node {id: '${escape(n.id)}'}) SET n.label='${escape(n.label)}', n.type='${escape(n.type)}';`);
   }
   for (const e of edges) {
-    statements.push(`MATCH (a:Node {id: '${e.from_id}'}), (b:Node {id: '${e.to_id}'}) MERGE (a)-[:${safeRel(e.type)}]->(b);`);
+    statements.push(`MATCH (a:Node {id: '${escape(e.from_id)}'}), (b:Node {id: '${escape(e.to_id)}'}) MERGE (a)-[:${safeRel(e.type)}]->(b);`);
   }
   return statements;
 }

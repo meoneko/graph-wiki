@@ -1,14 +1,39 @@
 import { z } from 'zod';
 import { getDiff, parseDiff } from '../../pipeline/gitDiff.js';
-import { buildImpactReport } from '../../pipeline/impactReport.js';
+import { buildImpactReport, type ImpactReport } from '../../pipeline/impactReport.js';
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
+import { ensureQueryResult } from './results.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
-import type { QueryMode } from '../../core/types.js';
+import type { QueryMode, QueryResult } from '../../core/types.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
+
+function toImpactResult(report: ImpactReport, projectId?: string): QueryResult {
+  return {
+    ...report,
+    data: {
+      ...report.data,
+      changedNodes: report.changedNodes,
+      affectedNodes: report.affectedNodes,
+      affectedEntrypoints: report.affectedEntrypoints,
+      riskScore: report.riskScore,
+      riskRationale: report.riskRationale,
+      affectedFlows: report.affectedFlows,
+      reviewSuggestions: report.reviewSuggestions,
+      ...(projectId !== undefined ? { projectId } : {}),
+      stats: {
+        nodes: report.affectedNodes.length,
+        edges: report.data.edges.length,
+        flows: report.affectedFlows.length,
+        communities: 0,
+        entrypoints: report.affectedEntrypoints.length,
+      },
+    },
+  };
+}
 
 export function registerReviewTools(): void {
   registerTool({
@@ -33,20 +58,7 @@ export function registerReviewTools(): void {
       }).parse(args);
       const parsed = await parseDiff(input.diff);
       const report = await buildImpactReport(parsed, input.workspaceId, input.mode as QueryMode);
-      return {
-        ...report,
-        data: {
-          ...(report.data ?? {}),
-          changedNodes: report.changedNodes,
-          affectedNodes: report.affectedNodes,
-          affectedEntrypoints: report.affectedEntrypoints,
-          riskScore: report.riskScore,
-          riskRationale: report.riskRationale,
-          affectedFlows: report.affectedFlows,
-          reviewSuggestions: report.reviewSuggestions,
-          projectId: input.projectId,
-        },
-      };
+      return toImpactResult(report, input.projectId);
     },
   });
 
@@ -69,7 +81,7 @@ export function registerReviewTools(): void {
         mode: QueryModeSchema
       }).parse(args);
       const diff = await parseDiff(input.diffText);
-      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode);
+      return toImpactResult(await buildImpactReport(diff, input.workspaceId, input.mode as QueryMode));
     },
   });
 
@@ -96,7 +108,7 @@ export function registerReviewTools(): void {
         mode: QueryModeSchema
       }).parse(args);
       const diff = await getDiff(input.repoPath ?? process.cwd(), input.base, input.head);
-      return buildImpactReport(diff, input.workspaceId, input.mode as QueryMode);
+      return toImpactResult(await buildImpactReport(diff, input.workspaceId, input.mode as QueryMode));
     },
   });
 
@@ -120,7 +132,7 @@ export function registerReviewTools(): void {
       }).parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
       const operation = OperationResolver.resolve({ caller: 'mcp.review.blast_radius' });
-      return engine.getBlastRadiusIds(input.nodeId, operation, input.mode as QueryMode);
+      return ensureQueryResult(await engine.getBlastRadiusIds(input.nodeId, operation, input.mode as QueryMode));
     },
   });
 
@@ -144,7 +156,7 @@ export function registerReviewTools(): void {
       }).parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
       const operation = OperationResolver.resolve({ caller: 'mcp.review.get_risk_score' });
-      return engine.getRiskScore(input.nodeIds, operation, input.mode as QueryMode);
+      return ensureQueryResult(await engine.getRiskScore(input.nodeIds, operation, input.mode as QueryMode));
     },
   });
 }

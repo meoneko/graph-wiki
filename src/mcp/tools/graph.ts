@@ -3,6 +3,7 @@ import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { detectCommunities, generateArchitectureOverview } from '../../core/graph/analysis/community.js';
 import { registerTool } from './runtime.js';
+import { okResult, insufficientEvidence } from './results.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
@@ -107,15 +108,7 @@ export function registerGraphTools(): void {
         cohesion: community.cohesion,
         couplingWarnings: community.couplingWarnings,
       }));
-      return {
-        status: 'OK',
-        data: { communities },
-        reasoning: { selected_paths: [], selection_explanation: ['communities grouped from visible graph'] },
-        confidence: { level: communities.length > 0 ? 'MEDIUM' : 'LOW', reasons: ['derived from graph topology'] },
-        provenance: { sources: [] },
-        warnings: [],
-        codes: [],
-      };
+      return okResult({ communities }, ['communities grouped from visible graph']);
     },
   });
 
@@ -155,19 +148,9 @@ export function registerGraphTools(): void {
           project: node.project,
           source_file: node.source_file,
         }));
-      return {
-        status: community ? 'OK' : 'INSUFFICIENT_EVIDENCE',
-        nodes,
-        data: { nodes },
-        reasoning: {
-          selected_paths: [],
-          selection_explanation: community ? ['community nodes selected from visible graph'] : ['community not found'],
-        },
-        confidence: { level: nodes.length > 0 ? 'MEDIUM' : 'LOW', reasons: ['derived from graph topology'] },
-        provenance: { sources: [] },
-        warnings: [],
-        codes: community ? [] : ['COMMUNITY_NOT_FOUND'],
-      };
+      return community
+        ? okResult({ nodes }, ['community nodes selected from visible graph'])
+        : insufficientEvidence({ nodes: [] }, ['community not found'], ['COMMUNITY_NOT_FOUND']);
     },
   });
 

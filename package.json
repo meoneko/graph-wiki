@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-grammars.mjs",
+    "build:extension": "npm run build -w packages/vscode-extension",
+    "package:extension": "npm run package -w packages/vscode-extension",
     "crg": "node dist/cli/index.js",
     "dev": "tsx src/cli/index.ts",
     "serve:mcp": "tsx src/mcp/server.ts",

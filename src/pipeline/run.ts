@@ -92,7 +92,13 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
   const currentNodes = db.getAllNodesByWorkspace(workspace.id);
   const currentEdges = db.getEdgesByWorkspace(workspace.id);
 
-  // 5. Write artifacts & verify
+  // 5. AI enrichment (disabled by default; logs skip reason so users know it exists)
+  const enrichment = await PipelineStages.enrichFacts(graphFacts, currentNodes, currentEdges, workspace.id, db, config);
+  if (enrichment.status === 'skipped') {
+    console.log(`[CRG] stage 05 enrichment skipped (${enrichment.reason ?? 'no AI provider configured'}) — set ai.provider in knowledge.config.yaml to enable`);
+  }
+
+  // 6. Write artifacts & verify
   await PipelineStages.writeGraphArtifacts(db, workspace.id);
   const report = await PipelineStages.verifyGraph(currentNodes, currentEdges, workspace, db, config);
 
