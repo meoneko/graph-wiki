@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
@@ -9,7 +9,15 @@ export function registerRefactorTools(): void {
   registerTool({
     name: 'rename_preview',
     description: 'Preview symbol rename impact',
-    inputSchema: { oldSymbol: 'string', newSymbol: 'string', workspaceId: 'string' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        oldSymbol: { type: 'string' },
+        newSymbol: { type: 'string' },
+        workspaceId: { type: 'string' },
+      },
+      required: ['oldSymbol', 'newSymbol', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({ oldSymbol: z.string(), newSymbol: z.string(), workspaceId: z.string() }).parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
@@ -21,7 +29,13 @@ export function registerRefactorTools(): void {
   registerTool({
     name: 'find_dead_code',
     description: 'Find unreferenced symbols',
-    inputSchema: { workspaceId: 'string' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: { type: 'string' },
+      },
+      required: ['workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({ workspaceId: z.string() }).parse(args);
       const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);

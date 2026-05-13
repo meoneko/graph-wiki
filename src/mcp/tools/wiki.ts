@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { getDB } from '../../storage/GraphDB.js';
 import { loadConfig, resolveDbPath } from '../../pipeline/config.js';
 import { generateWiki } from '../../pipeline/stages/07_wiki.js';
@@ -14,7 +14,15 @@ export function registerWikiTools(): void {
   registerTool({
     name: 'get_wiki_page',
     description: 'Get wiki page for node (trust-aware)',
-    inputSchema: { nodeId: 'string', workspaceId: 'string', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string' },
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['nodeId', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         nodeId: z.string(),
@@ -39,7 +47,14 @@ export function registerWikiTools(): void {
   registerTool({
     name: 'generate_wiki',
     description: 'Generate trust-aware wiki for workspace',
-    inputSchema: { workspaceId: 'string', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         workspaceId: z.string(),

@@ -41,7 +41,7 @@ async function listProjectFiles(project: ProjectConfig): Promise<string[]> {
   return files.filter((file) => !ignoreFilter.isIgnored(path.relative(project.path, file)));
 }
 
-async function getFilesToExtract(project: ProjectConfig, config: KnowledgeConfig, db: GraphDB, options: ExtractOptions): Promise<string[]> {
+async function getFilesToExtract(workspace: WorkspaceConfig, project: ProjectConfig, config: KnowledgeConfig, db: GraphDB, options: ExtractOptions): Promise<string[]> {
   const files = await listProjectFiles(project);
   const existingImportMap = await loadImportMap(config, project.id);
   const importMapNeedsRebuild = !options.incremental || !options.changedFiles?.length || options.changedFiles
@@ -76,6 +76,7 @@ async function getFilesToExtract(project: ProjectConfig, config: KnowledgeConfig
     const content = await readFile(file, 'utf-8');
     const hash = sha1(content);
     if (db.getFileHash(project.id, normalized) !== hash) {
+      db.deleteDataForSourceFile(workspace.id, project.id, normalized);
       changed.push(normalized);
       db.upsertFileHash(project.id, normalized, hash);
     }
@@ -89,7 +90,7 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
   const rejects: RejectedRecord[] = [];
 
   for (const project of projects) {
-    const changedFiles = await getFilesToExtract(project, config, db, options);
+    const changedFiles = await getFilesToExtract(workspace, project, config, db, options);
     if (changedFiles.length === 0) continue;
 
     const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path };

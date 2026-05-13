@@ -41,10 +41,6 @@ function isPascalCase(name: string): boolean {
   return /^[A-Z]/.test(name);
 }
 
-function isHookName(name: string): boolean {
-  return /^use[A-Z]/.test(name);
-}
-
 function isIdentifierLike(node: Node): boolean {
   return node.type === 'identifier' || node.type === 'type_identifier' || node.type === 'property_identifier';
 }
@@ -112,9 +108,20 @@ export class TypeScriptTreeSitterParser implements ILanguageParser {
         if (nameNode) symbols.push(this.toSymbol(node, text(nameNode, source), 'class', source));
       } else if (node.type === 'variable_declarator') {
         const valueNode = this.variableValue(node);
-        if (!valueNode || (valueNode.type !== 'arrow_function' && valueNode.type !== 'function_expression')) continue;
+        const functionNode = valueNode ? this.functionLikeValue(valueNode) : undefined;
+        if (!functionNode) continue;
         const nameNode = node.childForFieldName('name') ?? this.firstIdentifier(node);
-        if (nameNode) symbols.push(this.toSymbol(node, text(nameNode, source), 'function', source, valueNode));
+        if (nameNode) symbols.push(this.toSymbol(node, text(nameNode, source), 'function', source, functionNode));
+      } else if (node.type === 'export_statement') {
+        const exportedCall = node.namedChildren.find((child) => child.type === 'call_expression');
+        const functionNode = exportedCall ? this.functionLikeValue(exportedCall) : undefined;
+        if (!functionNode) continue;
+        const nameNode = functionNode.childForFieldName('name') ?? this.firstIdentifier(functionNode);
+        const name = nameNode ? text(nameNode, source) : 'default';
+        symbols.push(this.toSymbol(node, name, 'function', source, functionNode));
+      } else if (node.type === 'object') {
+        const route = this.routeFromObject(node, source);
+        if (route) symbols.push(route);
       }
     }
 
@@ -145,6 +152,52 @@ export class TypeScriptTreeSitterParser implements ILanguageParser {
       isStatic: false,
       isEntrypoint: isComponent,
     };
+  }
+
+  private routeFromObject(node: Node, source: string): ParsedSymbol | undefined {
+    const pairs = node.namedChildren.filter((child) => child.type === 'pair');
+    let pathNode: Node | undefined;
+    let targetNode: Node | undefined;
+
+    for (const pair of pairs) {
+      const key = pair.childForFieldName('key');
+      const value = pair.childForFieldName('value');
+      if (!key || !value) continue;
+      const keyText = text(key, source);
+      if (keyText === 'path' && value.type === 'string') pathNode = value;
+      if (keyText === 'element' || keyText === 'Component' || keyText === 'component') targetNode = value;
+    }
+
+    if (!pathNode || !targetNode) return undefined;
+    const routePath = unquote(text(pathNode, source));
+    const calledSymbols = this.routeTargets(targetNode, source).map((name) => ({
+      name,
+      qualifiedName: name,
+      callSite: { line: targetNode!.startPosition.row + 1, column: targetNode!.startPosition.column + 1 },
+    }));
+
+    return {
+      name: `Route:${routePath}`,
+      qualifiedName: `Route:${routePath}`,
+      kind: 'top_level_statement',
+      startLine: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+      body: text(node, source),
+      calledSymbols,
+      annotations: ['ts_route'],
+      isPublic: this.isExported(node),
+      isStatic: false,
+      isEntrypoint: true,
+    };
+  }
+
+  private routeTargets(node: Node, source: string): string[] {
+    if (node.type === 'identifier' || node.type === 'property_identifier') return [text(node, source)];
+    if (node.type === 'jsx_element' || node.type === 'jsx_self_closing_element') {
+      const nameNode = node.childForFieldName('name') ?? node.namedChildren.find(isIdentifierLike);
+      return nameNode ? [text(nameNode, source)] : [];
+    }
+    return this.walk(node).filter(isIdentifierLike).map((child) => text(child, source));
   }
 
   private extractImports(root: Node, source: string): ImportDecl[] {
@@ -273,7 +326,17 @@ export class TypeScriptTreeSitterParser implements ILanguageParser {
   }
 
   private variableValue(node: Node): Node | undefined {
-    return node.childForFieldName('value') ?? node.namedChildren.find((child) => child.type === 'arrow_function' || child.type === 'function_expression');
+    return node.childForFieldName('value') ?? node.namedChildren.find((child) =>
+      child.type === 'arrow_function' ||
+      child.type === 'function_expression' ||
+      child.type === 'call_expression'
+    );
+  }
+
+  private functionLikeValue(node: Node): Node | undefined {
+    if (node.type === 'arrow_function' || node.type === 'function_expression') return node;
+    if (node.type !== 'call_expression') return undefined;
+    return this.walk(node).find((child) => child.type === 'arrow_function' || child.type === 'function_expression');
   }
 
   private firstIdentifier(node: Node): Node | undefined {

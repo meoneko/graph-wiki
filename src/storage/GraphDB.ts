@@ -267,7 +267,15 @@ export class GraphDB {
   }
 
   deleteNodesByWorkspace(workspace: string): void {
-    this.db.prepare('DELETE FROM nodes WHERE workspace = ?').run(workspace);
+    this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM edges
+        WHERE from_id IN (SELECT id FROM nodes WHERE workspace = ?)
+           OR to_id IN (SELECT id FROM nodes WHERE workspace = ?)
+      `).run(workspace, workspace);
+      this.db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE workspace = ?)').run(workspace);
+      this.db.prepare('DELETE FROM nodes WHERE workspace = ?').run(workspace);
+    })();
   }
 
   // ── Edges ─────────────────────────────────────────────────────────────────
@@ -300,13 +308,52 @@ export class GraphDB {
     this.db.prepare('DELETE FROM edges WHERE workspace = ?').run(workspace);
   }
 
+  deleteDataForSourceFile(workspace: string, project: string, sourceFile: string): void {
+    this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM edges
+        WHERE workspace = ?
+          AND (
+            from_id IN (SELECT id FROM nodes WHERE workspace = ? AND project = ? AND source_file = ?)
+            OR to_id IN (SELECT id FROM nodes WHERE workspace = ? AND project = ? AND source_file = ?)
+          )
+      `).run(workspace, workspace, project, sourceFile, workspace, project, sourceFile);
+
+      this.db.prepare(`
+        DELETE FROM embeddings
+        WHERE node_id IN (SELECT id FROM nodes WHERE workspace = ? AND project = ? AND source_file = ?)
+      `).run(workspace, project, sourceFile);
+
+      this.db.prepare(`
+        DELETE FROM nodes_fts
+        WHERE rowid IN (SELECT rowid FROM nodes WHERE workspace = ? AND project = ? AND source_file = ?)
+      `).run(workspace, project, sourceFile);
+
+      this.db.prepare('DELETE FROM nodes WHERE workspace = ? AND project = ? AND source_file = ?')
+        .run(workspace, project, sourceFile);
+
+      this.db.prepare(`
+        DELETE FROM facts_fts
+        WHERE rowid IN (SELECT rowid FROM facts WHERE workspace = ? AND project = ? AND source_file = ?)
+      `).run(workspace, project, sourceFile);
+
+      this.db.prepare('DELETE FROM facts WHERE workspace = ? AND project = ? AND source_file = ?')
+        .run(workspace, project, sourceFile);
+    })();
+  }
+
   clearWorkspaceData(workspace: string, projectIds: string[]): void {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM nodes_fts WHERE rowid IN (SELECT rowid FROM nodes WHERE workspace = ?)').run(workspace);
       this.db.prepare('DELETE FROM facts_fts WHERE rowid IN (SELECT rowid FROM facts WHERE workspace = ?)').run(workspace);
 
+      this.db.prepare(`
+        DELETE FROM edges
+        WHERE workspace = ?
+           OR from_id IN (SELECT id FROM nodes WHERE workspace = ?)
+           OR to_id IN (SELECT id FROM nodes WHERE workspace = ?)
+      `).run(workspace, workspace, workspace);
       this.db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE workspace = ?)').run(workspace);
-      this.db.prepare('DELETE FROM edges WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM nodes WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM facts WHERE workspace = ?').run(workspace);
       this.db.prepare('DELETE FROM rejects WHERE workspace = ?').run(workspace);

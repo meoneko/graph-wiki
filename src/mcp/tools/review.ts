@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { getDiff, parseDiff } from '../../pipeline/gitDiff.js';
 import { buildImpactReport } from '../../pipeline/impactReport.js';
 import { getDB } from '../../storage/GraphDB.js';
@@ -12,9 +12,56 @@ const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).d
 
 export function registerReviewTools(): void {
   registerTool({
+    name: 'detect_changes',
+    description: 'Analyze a raw git diff and return trust-aware change impact for the VS Code extension',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diff: { type: 'string' },
+        workspaceId: { type: 'string' },
+        projectId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['diff', 'workspaceId'],
+    },
+    handler: async (args) => {
+      const input = z.object({
+        diff: z.string(),
+        workspaceId: z.string(),
+        projectId: z.string().optional(),
+        mode: QueryModeSchema,
+      }).parse(args);
+      const parsed = await parseDiff(input.diff);
+      const report = await buildImpactReport(parsed, input.workspaceId, input.mode as QueryMode);
+      return {
+        ...report,
+        data: {
+          ...(report.data ?? {}),
+          changedNodes: report.changedNodes,
+          affectedNodes: report.affectedNodes,
+          affectedEntrypoints: report.affectedEntrypoints,
+          riskScore: report.riskScore,
+          riskRationale: report.riskRationale,
+          affectedFlows: report.affectedFlows,
+          reviewSuggestions: report.reviewSuggestions,
+          projectId: input.projectId,
+        },
+      };
+    },
+  });
+
+  registerTool({
     name: 'review_diff',
     description: 'Review a raw diff text with trust boundary',
-    inputSchema: { diffText: 'string', workspaceId: 'string', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        diffText: { type: 'string' },
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['diffText', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         diffText: z.string(),
@@ -29,7 +76,17 @@ export function registerReviewTools(): void {
   registerTool({
     name: 'review_pr',
     description: 'Review impact by git range with trust boundary',
-    inputSchema: { base: 'string', head: 'string', workspaceId: 'string', repoPath: 'string?', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base: { type: 'string' },
+        head: { type: 'string' },
+        workspaceId: { type: 'string' },
+        repoPath: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['base', 'head', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         base: z.string(),
@@ -45,8 +102,16 @@ export function registerReviewTools(): void {
 
   registerTool({
     name: 'blast_radius',
-    description: 'Get trust-aware blast radius from node',
-    inputSchema: { nodeId: 'string', workspaceId: 'string', mode: 'string?' },
+    description: 'Get trust-aware blast radius (all transitively affected nodes/edges) starting from a single node ID. Use this for open-ended impact analysis. For flow-level impact use get_affected_flows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string' },
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['nodeId', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         nodeId: z.string(),
@@ -62,7 +127,15 @@ export function registerReviewTools(): void {
   registerTool({
     name: 'get_risk_score',
     description: 'Compute risk score for node set within trust boundary',
-    inputSchema: { nodeIds: 'string[]', workspaceId: 'string', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIds: { type: 'array', items: { type: 'string' } },
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['nodeIds', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         nodeIds: z.array(z.string()),

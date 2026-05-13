@@ -7,3 +7,4 @@ knowledge.config.local.yaml
 knowledge/
 .env
 .claude/
+packages/vscode-extension/*.vsix

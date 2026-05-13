@@ -41,6 +41,28 @@ describe('TypeScriptTreeSitterParser', () => {
     expect(byName.get('Dashboard')?.calledSymbols.map((call) => call.name)).toEqual(expect.arrayContaining(['useState', 'refresh']));
   });
 
+  it('extracts React components wrapped by CST call expressions', async () => {
+    const parser = new TypeScriptTreeSitterParser();
+    const parsed = await parser.parse(`
+      import React, { memo, forwardRef } from 'react';
+      export const MemoCard = memo(() => <article />);
+      export const ForwardedCard = React.forwardRef(function ForwardedCard() {
+        return <section />;
+      });
+      export default connect(mapState)(function Screen() {
+        return <main />;
+      });
+      export const routes = [{ path: '/users', element: <Users /> }];
+    `, 'wrapped.tsx');
+    const byName = new Map(parsed.symbols.map((symbol) => [symbol.name, symbol]));
+
+    expect(byName.get('MemoCard')?.annotations).toContain('jsx_component');
+    expect(byName.get('ForwardedCard')?.annotations).toContain('jsx_component');
+    expect(byName.get('Screen')?.annotations).toContain('jsx_component');
+    expect(byName.get('Route:/users')?.annotations).toContain('ts_route');
+    expect(byName.get('Route:/users')?.calledSymbols.map((call) => call.name)).toContain('Users');
+  });
+
   it('extracts JavaScript imports, require calls, and functions', async () => {
     const parsed = await parseFixture('basic.js');
 

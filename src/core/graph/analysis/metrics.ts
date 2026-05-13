@@ -1,4 +1,4 @@
-import type { GraphEdge, GraphNode } from "../contracts.js";
+import type { GraphEdge, GraphNode } from '../../types.js';
 
 export interface GraphAnalyticalMetrics {
   hotspots: Array<{ nodeId: string; degree: number }>;
@@ -15,11 +15,17 @@ function getNodeDomain(node: GraphNode): string {
   if (typeof metadata.domain === "string" && metadata.domain.length > 0) {
     return metadata.domain;
   }
+  if (typeof metadata.derived_domain === "string" && metadata.derived_domain.length > 0) {
+    return metadata.derived_domain;
+  }
+  if (typeof node.domain === "string" && node.domain.length > 0) {
+    return node.domain;
+  }
   return node.type;
 }
 
 function edgeId(edge: GraphEdge): string {
-  return `${edge.from}->${edge.to}:${edge.type}`;
+  return `${edge.from_id}->${edge.to_id}:${edge.type}`;
 }
 
 export function computeGraphMetrics(graph: { nodes: GraphNode[]; edges: GraphEdge[] }): GraphAnalyticalMetrics {
@@ -64,10 +70,10 @@ export function computeGraphMetrics(graph: { nodes: GraphNode[]; edges: GraphEdg
   }
 
   for (const edge of graph.edges) {
-    degreeMap.set(edge.from, (degreeMap.get(edge.from) ?? 0) + 1);
-    degreeMap.set(edge.to, (degreeMap.get(edge.to) ?? 0) + 1);
-    if (parent.has(edge.from) && parent.has(edge.to)) {
-      union(edge.from, edge.to);
+    degreeMap.set(edge.from_id, (degreeMap.get(edge.from_id) ?? 0) + 1);
+    degreeMap.set(edge.to_id, (degreeMap.get(edge.to_id) ?? 0) + 1);
+    if (parent.has(edge.from_id) && parent.has(edge.to_id)) {
+      union(edge.from_id, edge.to_id);
     }
   }
 
@@ -79,8 +85,8 @@ export function computeGraphMetrics(graph: { nodes: GraphNode[]; edges: GraphEdg
 
   const bridges = graph.edges
     .map((edge) => {
-      const fromNode = nodesById.get(edge.from);
-      const toNode = nodesById.get(edge.to);
+      const fromNode = nodesById.get(edge.from_id);
+      const toNode = nodesById.get(edge.to_id);
       if (!fromNode || !toNode) return null;
 
       const fromDomain = getNodeDomain(fromNode);

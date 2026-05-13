@@ -38,7 +38,7 @@ There is no lint script — TypeScript strict mode (`strict`, `noImplicitOverrid
 
 `code-review-graph` is a local-first codebase intelligence system. It parses source code (C#, TypeScript/React) into a SQLite knowledge graph, then exposes that graph via a CLI (`crg`), an MCP server (for Claude Desktop), and a VS Code extension. The primary use case is impact analysis: given a git diff, compute the blast radius across endpoints, use cases, and DTOs.
 
-### Pipeline (8 stages)
+### Pipeline (9 stages)
 
 All pipeline logic lives in `src/pipeline/`. The orchestrator is `src/pipeline/run.ts`; stages execute sequentially:
 
@@ -50,6 +50,7 @@ All pipeline logic lives in `src/pipeline/`. The orchestrator is `src/pipeline/r
 | 04a | `04a_build_canonical.ts` | Authoritative structural nodes/edges |
 | 04b | `04b_build_derived.ts` | Inferred relationships |
 | 04c | `04c_build_exploratory.ts` | Ambiguous/low-confidence relationships |
+| 04d | `04d_build_flows.ts` | Flow graph derivation — synthetic `flow_domain` nodes and `belongs_to_flow` edges |
 | 05 | `05_enrich.ts` | Optional AI enrichment (OpenRouter/Gemini) |
 | 06 | `06_verify.ts` | Workspace verification (flows, coverage, parity) |
 | 07 | `07_wiki.ts` | Generate markdown documentation |
@@ -58,19 +59,43 @@ All pipeline logic lives in `src/pipeline/`. The orchestrator is `src/pipeline/r
 ### Language Adapters (`src/pipeline/adapters/`)
 
 - `CSharpAdapter.ts` — controllers, minimal APIs, use cases, DTOs, partial classes, extension methods
-- `TSReactAdapter.ts` — routes, API calls (fetch/axios)
+- `TypeScriptAdapter.ts` — routes, API calls (fetch/axios); uses `TypeScriptTreeSitterParser` under the hood
 - `StructuredFileAdapter.ts` — JSON/YAML/SQL/Dockerfile/Terraform config extraction
 - `registry.ts` — maps file extensions to adapters
+
+### Scanner (`src/scanner/`)
+
+Lower-level AST parsing layer that adapters delegate to:
+
+- `core/ILanguageParser.ts` — shared `ParsedFile` / `ParsedSymbol` / `ILanguageParser` contracts
+- `core/WebTreeSitterWrapper.ts` — initialises the WASM tree-sitter runtime once
+- `languages/csharp/CSharpParser.ts` — C# tree-sitter parser
+- `languages/typescript/TypeScriptTreeSitterParser.ts` — TypeScript/TSX tree-sitter parser
+
+Adapters consume `ParsedFile` from scanners; scanners never touch the graph DB directly.
+
+### Trust Classification (`src/pipeline/TrustClassifier.ts`)
+
+`TrustClassifier.classify(extractor)` maps an extractor ID string to `{ trust_level, decision_status }`. The three trust levels drive the entire query/traversal system:
+
+- `AUTHORITATIVE` — AST/parser-derived (e.g. `csharp_tree_sitter`, `ts_tree_sitter_parser`, config parsers)
+- `DERIVED` — cross-file analysis, composition rules (e.g. `ts_react_adapter`, `sql_parser`)
+- `EXPLORATORY` — AI or heuristic facts
+
+### Framework Adapters (`src/pipeline/frameworks/`)
+
+Post-extraction layer that detects framework conventions (currently ASP.NET via `aspnet.ts`) and adds derived edges. `globalFrameworkAdapterRegistry` in `registry.ts` resolves matching adapters per language.
 
 ### Core Graph & Query (`src/core/`)
 
 - `types.ts` — canonical type definitions: `NodeType`, `EdgeType`, `ConfidenceBand`, `DecisionStatus`, `QueryMode`
 - `nodeTypeRegistry.ts` — 27+ registered node types (grouped: C#, TypeScript, config, schema, infrastructure, API)
-- `flows.ts` — flow definitions and composition
+- `flows.ts` — flow definitions and composition (`computeFlows`, `flowMembershipEdges`, `withDerivedDomains`)
 - `graph/query/TrustedQueryService.ts` — single entry point for all graph queries
 - `graph/query/OperationResolver.ts` — validates and routes every operation (ask, impact, lineage, wiki, governance) — **this is mandatory; nothing bypasses it**
 - `graph/query/TrustAwareQueryEngine.ts` — trust-aware BFS/DFS traversal, visible graph filtering
 - `graph/traversal/EdgePolicyTable.ts` — trust-aware edge filtering matrix
+- `graph/reasoning/reasoning-policy.ts` — reasoning policy for trust-aware traversal
 - `graph/analysis/` — community detection, centrality metrics
 
 ### Storage (`src/storage/`)
@@ -84,6 +109,10 @@ Single SQLite database via `GraphDB.ts` with 7 tables: `nodes`, `edges`, `facts`
 ### CLI (`src/cli/`)
 
 `index.ts` uses Commander to dispatch: `build`, `watch`, `ask`, `impact`, `wiki`, `serve-mcp`, `stats`, `search`, `register`, `export`.
+
+### Export (`src/export/`)
+
+Three one-way exporters from `GraphNode[]`/`GraphEdge[]` — `graphml.ts`, `neo4j.ts`, `obsidian.ts`. These are write-only and do not feed back into the graph.
 
 ### Data Flow
 
@@ -103,7 +132,7 @@ All runtime configuration is in `knowledge.config.yaml` (copy from `knowledge.co
 ### Key Dependencies
 
 - `better-sqlite3` — synchronous SQLite, WAL mode
-- `tree-sitter` + `tree-sitter-c-sharp`, `tree-sitter-typescript` — AST parsing
+- `web-tree-sitter` + `@vscode/tree-sitter-wasm` + `tree-sitter-c-sharp`/`tree-sitter-typescript` WASM grammars — AST parsing
 - `@modelcontextprotocol/sdk` — MCP protocol
 - `tsx` — runs TypeScript directly during development (no build needed for `npm run dev`)
 - `vitest` — test runner; tests are acceptance tests (`.acceptance.test.ts`), not unit tests

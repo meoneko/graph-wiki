@@ -12,7 +12,16 @@ export function registerQueryTools(): void {
   registerTool({
     name: 'get_node',
     description: 'Get a node by id with trust-aware visibility',
-    inputSchema: { nodeId: 'string', workspaceId: 'string', operation: 'string?', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string' },
+        workspaceId: { type: 'string' },
+        operation: { type: 'string', enum: ['ask', 'impact', 'lineage', 'wiki', 'governance'] },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['nodeId', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         nodeId: z.string(),
@@ -29,7 +38,17 @@ export function registerQueryTools(): void {
   registerTool({
     name: 'get_neighbors',
     description: 'Get trust-aware neighbors of a node',
-    inputSchema: { nodeId: 'string', workspaceId: 'string', depth: 'number?', operation: 'string?', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string' },
+        workspaceId: { type: 'string' },
+        depth: { type: 'number' },
+        operation: { type: 'string', enum: ['ask', 'impact', 'lineage', 'wiki', 'governance'] },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['nodeId', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         nodeId: z.string(),
@@ -47,7 +66,17 @@ export function registerQueryTools(): void {
   registerTool({
     name: 'get_path',
     description: 'Find reasoning paths between two nodes (auth-first selection)',
-    inputSchema: { fromId: 'string', toId: 'string', workspaceId: 'string', operation: 'string?', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromId: { type: 'string' },
+        toId: { type: 'string' },
+        workspaceId: { type: 'string' },
+        operation: { type: 'string', enum: ['ask', 'impact', 'lineage', 'wiki', 'governance'] },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['fromId', 'toId', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         fromId: z.string(),
@@ -65,7 +94,16 @@ export function registerQueryTools(): void {
   registerTool({
     name: 'get_callers',
     description: 'Find trust-aware callers of a symbol',
-    inputSchema: { symbol: 'string', workspaceId: 'string', operation: 'string?', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string' },
+        workspaceId: { type: 'string' },
+        operation: { type: 'string', enum: ['ask', 'impact', 'lineage', 'wiki', 'governance'] },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['symbol', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         symbol: z.string(),

@@ -62,20 +62,23 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
 
   // 2. Validate & Classify (Hydrates trust metadata)
   const validated = await PipelineStages.validateFacts(extraction.candidates, workspace.id, db);
+  const graphFacts = _options.incremental
+    ? db.getFactsByWorkspace(workspace.id)
+    : validated.facts;
 
   // 3. Build Multi-Layer Graph
-  const canonical = await PipelineStages.buildCanonicalGraph(validated.facts, workspace.id, db);
+  const canonical = await PipelineStages.buildCanonicalGraph(graphFacts, workspace.id, db);
 
   // Load per-project importMaps so derived stage can create module-level `imports` edges.
   const projects = getWorkspaceProjects(config, workspace.id);
   const importMaps = (await Promise.all(projects.map((p) => loadImportMap(config, p.id))))
     .filter((m): m is ImportMapArtifact => m !== undefined);
 
-  const derived = await PipelineStages.buildDerivedGraph(validated.facts, workspace.id, db, {
+  const derived = await PipelineStages.buildDerivedGraph(graphFacts, workspace.id, db, {
     importMaps,
     canonicalNodes: canonical.nodes,
   });
-  const exploratory = await PipelineStages.buildExploratoryGraph(validated.facts, workspace.id, db);
+  const exploratory = await PipelineStages.buildExploratoryGraph(graphFacts, workspace.id, db);
 
   const allNodes = [...canonical.nodes, ...derived.nodes, ...exploratory.nodes];
   const allEdges = [...canonical.edges, ...derived.edges, ...exploratory.edges];
@@ -94,11 +97,11 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
   const report = await PipelineStages.verifyGraph(currentNodes, currentEdges, workspace, db, config);
 
   if (!report.passed) {
-    await PipelineStages.writeReport(workspace.id, report, config);
+    await PipelineStages.writeReport(workspace.id, report, config, { nodes: currentNodes, edges: currentEdges });
     throw new Error(`Verification failed for workspace ${workspaceId}: ${report.issues.join(', ')}`);
   }
 
   // 6. Wiki & Report
   await PipelineStages.generateWiki(workspace.id, currentNodes, currentEdges, db, config);
-  await PipelineStages.writeReport(workspace.id, report, config);
+  await PipelineStages.writeReport(workspace.id, report, config, { nodes: currentNodes, edges: currentEdges });
 }

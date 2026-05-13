@@ -18,6 +18,8 @@ type CallerId =
   | 'mcp.review.get_risk_score'
   | 'mcp.graph.graph_stats'
   | 'mcp.graph.architecture_overview'
+  | 'mcp.graph.list_communities'
+  | 'mcp.graph.get_community'
   | 'mcp.graph.find_hubs'
   | 'mcp.graph.find_bridges'
   | 'mcp.graph.find_gaps'
@@ -45,6 +47,8 @@ const IMPLICIT_OPERATION_BY_CALLER: Record<CallerId, OperationType> = {
   'mcp.review.get_risk_score': 'impact',
   'mcp.graph.graph_stats': 'wiki',
   'mcp.graph.architecture_overview': 'wiki',
+  'mcp.graph.list_communities': 'wiki',
+  'mcp.graph.get_community': 'wiki',
   'mcp.graph.find_hubs': 'wiki',
   'mcp.graph.find_bridges': 'wiki',
   'mcp.graph.find_gaps': 'wiki',

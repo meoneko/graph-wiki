@@ -92,6 +92,7 @@ export class TypeScriptAdapter implements IProjectAdapter {
 
   private symbolToCandidate(symbol: ParsedSymbol, filePath: string, context: AdapterContext): CandidateRecord {
     const type = this.resolveNodeType(symbol);
+    const domain = this.inferDomain(filePath, context.projectRoot);
     return {
       candidate_id: stableId(type, filePath, symbol.qualifiedName || symbol.name, String(symbol.startLine)),
       candidate_type: type,
@@ -106,14 +107,33 @@ export class TypeScriptAdapter implements IProjectAdapter {
       evidence: [makeEvidence(filePath, symbol.startLine, symbol.body ?? symbol.name)],
       called_symbols: symbol.calledSymbols.map((c) => c.qualifiedName || c.name),
       is_entrypoint: symbol.isEntrypoint,
+      http_path: this.extractRoutePath(symbol),
       annotations: symbol.annotations,
-      lang_meta: { kind: symbol.kind, parserBackend: this.parser.backendId, isPublic: symbol.isPublic },
+      domain,
+      lang_meta: { kind: symbol.kind, parserBackend: this.parser.backendId, isPublic: symbol.isPublic, derived_domain: domain },
     };
   }
 
   private resolveNodeType(symbol: ParsedSymbol): string {
+    if (symbol.annotations.includes('ts_route')) return 'ts_route';
     if (/^use[A-Z]/.test(symbol.name)) return 'ts_hook';
     if (symbol.annotations.includes('jsx_component')) return 'ts_component';
     return 'ts_function';
+  }
+
+  private extractRoutePath(symbol: ParsedSymbol): string | undefined {
+    return symbol.name.match(/^Route:(.*)$/)?.[1];
+  }
+
+  private inferDomain(filePath: string, projectRoot: string): string | undefined {
+    const relative = path.relative(projectRoot, filePath).replace(/\\/g, '/');
+    const parts = relative.split('/').filter(Boolean);
+    const srcIndex = parts.findIndex((part) => part === 'src' || part === 'app');
+    const candidate = srcIndex >= 0 ? parts[srcIndex + 1] : parts[0];
+    if (!candidate || candidate.includes('.')) return undefined;
+    if (['components', 'pages', 'routes', 'app', 'src', 'lib', 'utils', 'hooks'].includes(candidate.toLowerCase())) {
+      return parts[srcIndex + 2] && !parts[srcIndex + 2]!.includes('.') ? parts[srcIndex + 2] : candidate;
+    }
+    return candidate;
   }
 }

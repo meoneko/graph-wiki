@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { getDB } from '../../storage/GraphDB.js';
 import { resolveDbPath } from '../../pipeline/config.js';
 import { registerTool } from './runtime.js';
@@ -12,7 +12,15 @@ export function registerSearchTools(): void {
   registerTool({
     name: 'search',
     description: 'Search visible graph nodes with trust-aware filtering',
-    inputSchema: { query: 'string', workspaceId: 'string', mode: 'string?' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        workspaceId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+      },
+      required: ['query', 'workspaceId'],
+    },
     handler: async (args) => {
       const input = z.object({
         query: z.string(),
@@ -24,5 +32,4 @@ export function registerSearchTools(): void {
       return engine.searchNodes(input.query, operation, input.mode as QueryMode, 50);
     },
   });
-
 }

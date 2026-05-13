@@ -39,7 +39,8 @@ describe('TypeScriptAdapter', () => {
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.every((candidate) => candidate.extractor === 'ts_tree_sitter_parser')).toBe(true);
     expect(candidates.some((candidate) => candidate.extractor === 'ts_react_adapter')).toBe(false);
-    expect(candidates.some((candidate) => candidate.candidate_type === 'ts_route' || candidate.candidate_type === 'ts_api_endpoint')).toBe(false);
+    expect(candidates.some((candidate) => candidate.candidate_type === 'ts_api_endpoint')).toBe(false);
+    expect(candidates.some((candidate) => candidate.domain !== undefined)).toBe(true);
 
     const db = makeStubDb();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

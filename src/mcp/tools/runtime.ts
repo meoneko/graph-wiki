@@ -10,13 +10,20 @@ const tools: McpToolDefinition[] = [];
 export function registerTool(tool: McpToolDefinition): void {
   const existing = tools.findIndex((entry) => entry.name === tool.name);
   if (existing >= 0) {
-    tools.splice(existing, 1);
+    throw new Error(`Duplicate MCP tool registration: ${tool.name}`);
   }
   tools.push(tool);
 }
 
 export function getRegisteredTools(): McpToolDefinition[] {
   return [...tools];
+}
+
+export function clearRegisteredToolsForTest(): void {
+  if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {
+    throw new Error('clearRegisteredToolsForTest may only be used in tests.');
+  }
+  tools.length = 0;
 }
 
 export async function invokeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
