@@ -6,14 +6,20 @@ type CallerId =
   | 'cli.stats'
   | 'cli.search'
   | 'cli.export'
+  | 'cli.verify'
+  | 'cli.wiki'
   | 'service.ask'
   | 'pipeline.impact'
+  | 'structured-ask'
+  | 'agent-context'
+  | 'report-builder'
   | 'mcp.query.get_node'
   | 'mcp.query.get_neighbors'
   | 'mcp.query.get_path'
   | 'mcp.query.get_callers'
   | 'mcp.review.review_diff'
   | 'mcp.review.review_pr'
+  | 'mcp.review.detect_changes'
   | 'mcp.review.blast_radius'
   | 'mcp.review.get_risk_score'
   | 'mcp.graph.graph_stats'
@@ -26,8 +32,16 @@ type CallerId =
   | 'mcp.wiki.get_wiki_page'
   | 'mcp.wiki.generate_wiki'
   | 'mcp.search.search'
+  | 'mcp.flows.list_flows'
+  | 'mcp.flows.get_flow'
+  | 'mcp.flows.get_affected_flows'
+  | 'mcp.flows.get_minimal_context'
+  | 'mcp.flows.get_lineage'
   | 'mcp.refactor.rename_preview'
-  | 'mcp.refactor.find_dead_code';
+  | 'mcp.refactor.find_dead_code'
+  | 'cli.review-architecture'
+  | 'mcp.architecture.review'
+  | 'mcp.architecture.findings';
 
 const IMPLICIT_OPERATION_BY_CALLER: Record<CallerId, OperationType> = {
   'cli.ask': 'ask',
@@ -35,14 +49,20 @@ const IMPLICIT_OPERATION_BY_CALLER: Record<CallerId, OperationType> = {
   'cli.stats': 'wiki',
   'cli.search': 'ask',
   'cli.export': 'wiki',
+  'cli.verify': 'governance',
+  'cli.wiki': 'wiki',
   'service.ask': 'ask',
   'pipeline.impact': 'impact',
+  'structured-ask': 'ask',
+  'agent-context': 'ask',
+  'report-builder': 'wiki',
   'mcp.query.get_node': 'ask',
   'mcp.query.get_neighbors': 'impact',
   'mcp.query.get_path': 'lineage',
   'mcp.query.get_callers': 'lineage',
   'mcp.review.review_diff': 'impact',
   'mcp.review.review_pr': 'impact',
+  'mcp.review.detect_changes': 'impact',
   'mcp.review.blast_radius': 'impact',
   'mcp.review.get_risk_score': 'impact',
   'mcp.graph.graph_stats': 'wiki',
@@ -55,8 +75,16 @@ const IMPLICIT_OPERATION_BY_CALLER: Record<CallerId, OperationType> = {
   'mcp.wiki.get_wiki_page': 'wiki',
   'mcp.wiki.generate_wiki': 'wiki',
   'mcp.search.search': 'ask',
+  'mcp.flows.list_flows': 'wiki',
+  'mcp.flows.get_flow': 'wiki',
+  'mcp.flows.get_affected_flows': 'impact',
+  'mcp.flows.get_minimal_context': 'ask',
+  'mcp.flows.get_lineage': 'lineage',
   'mcp.refactor.rename_preview': 'impact',
   'mcp.refactor.find_dead_code': 'impact',
+  'cli.review-architecture': 'wiki',
+  'mcp.architecture.review': 'wiki',
+  'mcp.architecture.findings': 'wiki',
 };
 
 export interface ResolveOperationInput {

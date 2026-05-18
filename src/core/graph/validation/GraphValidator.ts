@@ -1,5 +1,6 @@
 import type { GraphEdge, GraphNode } from '../../types.js';
 import { EdgeType } from '../../types.js';
+import { STANDARD_NODE_TYPE_SET, resolveFlowType, getEdgeCategory } from '../../taxonomy.js';
 
 export interface ValidationIssue {
   code: string;
@@ -154,6 +155,17 @@ export class GraphValidator {
           suggestion: 'Enable external workflow in knowledge.config.yaml or demote this node to exploratory.',
         });
       }
+
+      // 4. Node type taxonomy check — warn if not in standard taxonomy
+      if (node.type && !STANDARD_NODE_TYPE_SET.has(node.type)) {
+        issues.push({
+          code: 'NODE_TYPE_NOT_IN_TAXONOMY',
+          severity: 'warning',
+          nodeId: node.id,
+          detail: `Node ${node.id} has type '${node.type}' which is not in the standard taxonomy`,
+          suggestion: 'Consider using a standard node type from the taxonomy (structural, runtime, data, frontend, system, or conceptual categories).',
+        });
+      }
     }
 
     // --- Edge checks ---
@@ -284,7 +296,32 @@ export class GraphValidator {
         });
       }
 
-      // 5. Forbidden patterns — only canonical/derived edges are structural contracts
+      // 4. Edge category taxonomy check — warn if edge type has no recognized category
+      if (edge.type && VALID_EDGE_TYPES.has(edge.type) && !getEdgeCategory(edge.type)) {
+        issues.push({
+          code: 'EDGE_CATEGORY_UNKNOWN',
+          severity: 'warning',
+          edgeId: edge.id,
+          detail: `Edge ${edge.id} has type '${edge.type}' which does not belong to a recognized edge category`,
+          suggestion: 'Consider using an edge type from a standard category: structural, runtime, entry/flow, contract, authority, data flow, or exploratory.',
+        });
+      }
+
+      // 5. Flow type inference — emit FLOW_TYPE_INFERRED when flow_type metadata is missing
+      if (edge.type && VALID_EDGE_TYPES.has(edge.type)) {
+        const flowResult = resolveFlowType(edge);
+        if (flowResult.inferred) {
+          issues.push({
+            code: 'FLOW_TYPE_INFERRED',
+            severity: 'warning',
+            edgeId: edge.id,
+            detail: `Edge ${edge.id} (type='${edge.type}') is missing flow_type metadata; inferred as '${flowResult.flowType}'`,
+            suggestion: 'Set metadata.flow_type explicitly to avoid inference warnings.',
+          });
+        }
+      }
+
+      // 6. Forbidden patterns — only canonical/derived edges are structural contracts
       if (edge.graph_kind !== 'canonical' && edge.graph_kind !== 'derived') continue;
 
       const from = nodeById.get(edge.from_id);

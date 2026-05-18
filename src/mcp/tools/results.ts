@@ -1,4 +1,5 @@
 import type { QueryResult, ResponseConfidence, DecisionStatus } from '../../core/types.js';
+import { enforceQueryResultContract, isValidQueryResult } from '../../core/graph/query/QueryResultValidator.js';
 
 export function toolResult(
   status: DecisionStatus,
@@ -49,21 +50,24 @@ export function toolError(message: string, codes: string[] = ['MCP_TOOL_ERROR'])
   });
 }
 
-export function ensureQueryResult(value: unknown, reasons: string[] = []): QueryResult {
-  if (isQueryResult(value)) return value;
-  return okResult({ value }, reasons);
+/**
+ * Ensures a value conforms to the QueryResult contract.
+ * If the value is already a valid QueryResult, returns it unchanged.
+ * Otherwise, wraps it in a proper QueryResult envelope.
+ *
+ * This is the primary boundary enforcement function for MCP tools.
+ * Raw graph data is NEVER returned without status and provenance.
+ *
+ * @see Requirements 9.1, 9.2, 9.3
+ */
+export function ensureQueryResult(value: unknown, reasons: string[] = [], context?: { tool?: string }): QueryResult {
+  if (isValidQueryResult(value)) return value as QueryResult;
+  return enforceQueryResultContract(value, context);
 }
 
+/**
+ * @deprecated Use isValidQueryResult from QueryResultValidator instead
+ */
 function isQueryResult(value: unknown): value is QueryResult {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<QueryResult>;
-  return (
-    typeof candidate.status === 'string'
-    && typeof candidate.data === 'object'
-    && typeof candidate.reasoning === 'object'
-    && typeof candidate.confidence === 'object'
-    && typeof candidate.provenance === 'object'
-    && Array.isArray(candidate.warnings)
-    && Array.isArray(candidate.codes)
-  );
+  return isValidQueryResult(value);
 }

@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
+import { PresetResolver, type AdapterConfig, type PolicyRule } from './PresetResolver.js';
+
+export type { AdapterConfig, PolicyRule } from './PresetResolver.js';
 
 export interface ProjectRules {
   extract?: string[];
@@ -30,22 +33,110 @@ export interface WorkspaceVerification {
   min_process_coverage?: number;
 }
 
+// ─── Policy Config Interfaces ────────────────────────────────────────────────
+
+/**
+ * Authority policy configuration for canonical fact eligibility,
+ * conflict resolution, and ambiguity handling.
+ */
+export interface AuthorityPolicyConfig {
+  canonicalFactRules?: PolicyRule[];
+  canonicalEdgeRules?: PolicyRule[];
+  ambiguityRules?: PolicyRule[];
+  conflictResolution?: {
+    priorityRange?: [number, number];
+    defaultPriority?: number;
+    samePriorityBehavior?: 'deny-wins' | 'ambiguous';
+    conflictingAllowDenyBehavior?: 'deny-wins' | 'ambiguous';
+  };
+}
+
+/**
+ * Graph policy configuration for graph-level rules.
+ */
+export interface GraphPolicyConfig {
+  rules?: PolicyRule[];
+  [key: string]: unknown;
+}
+
+/**
+ * Ask policy configuration for structured ask engine rules.
+ */
+export interface AskPolicyConfig {
+  rules?: PolicyRule[];
+  [key: string]: unknown;
+}
+
+/**
+ * Wiki policy configuration for wiki builder rules.
+ */
+export interface WikiPolicyConfig {
+  rules?: PolicyRule[];
+  [key: string]: unknown;
+}
+
+// ─── Governance Config ───────────────────────────────────────────────────────
+
+/**
+ * A forbidden traversal pattern between node types.
+ * Configured per workspace policy (not hardcoded in the platform kernel).
+ */
+export interface ForbiddenPattern {
+  id: string;
+  from_type: string;
+  to_type: string;
+  via_edge?: string;
+  description: string;
+}
+
+/**
+ * Governance configuration for authority chains, forbidden patterns,
+ * critical flows, and reporting tokens.
+ */
+export interface GovernanceConfig {
+  authority_chain?: string[];
+  forbidden_patterns?: ForbiddenPattern[];
+  critical_flows?: string[];
+  reporting?: {
+    unknown_token?: string;
+    inferred_token?: string;
+  };
+}
+
+// ─── Workspace Config ────────────────────────────────────────────────────────
+
+/**
+ * Workspace configuration defining source roots, language adapters,
+ * policy settings, and verification requirements.
+ *
+ * `profile_mode` semantics:
+ * - `bootstrap`: Initial indexing mode. Relaxes validation to allow
+ *   exploratory-first classification. All facts default to exploratory
+ *   unless explicitly promoted. Useful for first-time workspace onboarding
+ *   where canonical evidence hasn't been established yet.
+ * - `configured`: Normal operation mode. Full validation rules apply.
+ *   Canonical promotion requires policy compliance. This is the default
+ *   when `profile_mode` is omitted.
+ */
 export interface WorkspaceConfig {
   id: string;
   name?: string;
+  preset?: string;
   profile_mode?: 'bootstrap' | 'configured';
   projects: string[];
+  adapters?: AdapterConfig[];
   verification?: WorkspaceVerification;
   external_workflow_enabled?: boolean;
-  governance?: {
-    authority_chain?: string[];
-    forbidden_patterns?: string[];
-    reporting?: {
-      unknown_token?: string;
-      inferred_token?: string;
-    };
-  };
+  governance?: GovernanceConfig;
   rules_path?: string;
+  /** Authority policy — resolved via PresetResolver into effective config */
+  authorityPolicy?: AuthorityPolicyConfig;
+  /** Graph policy — resolved via PresetResolver into effective config */
+  graphPolicy?: GraphPolicyConfig;
+  /** Ask policy — resolved via PresetResolver into effective config */
+  askPolicy?: AskPolicyConfig;
+  /** Wiki policy — resolved via PresetResolver into effective config */
+  wikiPolicy?: WikiPolicyConfig;
 }
 
 export interface OutputConfig {
@@ -135,6 +226,64 @@ function mergeLocalConfig(base: KnowledgeConfig, local: RawKnowledgeConfig): Kno
   };
 }
 
+/**
+ * Resolves preset-based effective config for each workspace.
+ * When a workspace specifies a `preset`, the PresetResolver resolves the
+ * preset (following inheritance chains) and merges workspace-level overrides
+ * on top. Fields not overridden by the workspace inherit from the preset.
+ */
+function resolveWorkspacePresets(config: KnowledgeConfig): KnowledgeConfig {
+  const resolver = new PresetResolver();
+
+  const resolvedWorkspaces = config.workspaces.map((ws) => {
+    if (!ws.preset) return ws;
+
+    // Resolve the preset (follows extends chain)
+    const resolved = resolver.resolve(ws.preset);
+
+    // Merge workspace overrides on top of resolved preset
+    const merged = resolver.merge(resolved, {
+      id: ws.id,
+      name: ws.name,
+      preset: ws.preset,
+      projects: ws.projects,
+      adapters: ws.adapters,
+      verification: ws.verification,
+      authorityPolicy: ws.authorityPolicy,
+      graphPolicy: ws.graphPolicy,
+      askPolicy: ws.askPolicy,
+      wikiPolicy: ws.wikiPolicy,
+    });
+
+    // Reconstruct WorkspaceConfig with effective values from preset merge
+    return {
+      ...ws,
+      adapters: merged.adapters,
+      verification: merged.verification,
+      // Spread policy from merged result back into workspace-level fields
+      authorityPolicy: merged.policy.authorityPolicy
+        ? {
+            canonicalFactRules: merged.policy.authorityPolicy.canonicalFactRules,
+            canonicalEdgeRules: merged.policy.authorityPolicy.canonicalEdgeRules,
+            ambiguityRules: merged.policy.authorityPolicy.ambiguityRules,
+            conflictResolution: merged.policy.authorityPolicy.conflictResolution,
+          }
+        : ws.authorityPolicy,
+      graphPolicy: merged.policy.graphPolicy
+        ? { ...merged.policy.graphPolicy }
+        : ws.graphPolicy,
+      askPolicy: merged.policy.askPolicy
+        ? { ...merged.policy.askPolicy }
+        : ws.askPolicy,
+      wikiPolicy: merged.policy.wikiPolicy
+        ? { ...merged.policy.wikiPolicy }
+        : ws.wikiPolicy,
+    } satisfies WorkspaceConfig;
+  });
+
+  return { ...config, workspaces: resolvedWorkspaces };
+}
+
 export async function loadConfig(configPath = path.resolve(process.cwd(), 'knowledge.config.yaml')): Promise<KnowledgeConfig> {
   const raw = await readFile(configPath, 'utf-8');
   const parsed = YAML.parse(raw) as RawKnowledgeConfig;
@@ -149,14 +298,18 @@ export async function loadConfig(configPath = path.resolve(process.cwd(), 'knowl
 
   // Load local override (knowledge.config.local.yaml) — gitignored, never committed
   const localPath = configPath.replace(/\.yaml$/, '.local.yaml');
+  let config: KnowledgeConfig;
   try {
     const localRaw = await readFile(localPath, 'utf-8');
     const localParsed = YAML.parse(localRaw) as RawKnowledgeConfig;
-    return mergeLocalConfig(base, localParsed);
+    config = mergeLocalConfig(base, localParsed);
   } catch {
     // No local override — use base as-is
-    return base;
+    config = base;
   }
+
+  // Resolve presets: compute effective config for workspaces that specify a preset
+  return resolveWorkspacePresets(config);
 }
 
 export function getWorkspace(config: KnowledgeConfig, workspaceId: string): WorkspaceConfig {

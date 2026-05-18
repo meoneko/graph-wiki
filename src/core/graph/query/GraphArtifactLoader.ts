@@ -18,6 +18,18 @@ export class GraphValidationError extends Error {
   }
 }
 
+export class WorkspaceBoundaryViolationError extends Error {
+  readonly code = 'WORKSPACE_BOUNDARY_VIOLATION';
+
+  constructor(
+    readonly requestedWorkspace: string,
+    readonly violatingIds: string[],
+  ) {
+    super(`WORKSPACE_BOUNDARY_VIOLATION: artifacts from foreign workspace detected while loading workspace "${requestedWorkspace}"`);
+    this.name = 'WorkspaceBoundaryViolationError';
+  }
+}
+
 export interface LoadedGraphArtifacts {
   canonical: { nodes: GraphNode[]; edges: GraphEdge[] };
   derived: { nodes: GraphNode[]; edges: GraphEdge[] };
@@ -106,6 +118,18 @@ export class GraphArtifactLoader {
     };
 
     const allNodes = [...canonicalNodes, ...derivedNodes, ...exploratoryNodes, ...externalNodes];
+
+    // Defense-in-depth: verify all loaded artifacts belong to the requested workspace
+    const foreignNodes = allNodes.filter((n) => n.workspace !== workspaceId);
+    const foreignEdges = allEdges.filter((e) => e.workspace !== workspaceId);
+    if (foreignNodes.length > 0 || foreignEdges.length > 0) {
+      const violatingIds = [
+        ...foreignNodes.map((n) => n.id),
+        ...foreignEdges.map((e) => e.id),
+      ];
+      throw new WorkspaceBoundaryViolationError(workspaceId, violatingIds);
+    }
+
     const graphValidation = GraphValidator.validate(allNodes, allEdges, {
       externalWorkflowEnabled: false,
     });

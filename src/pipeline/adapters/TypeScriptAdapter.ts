@@ -5,6 +5,11 @@ import type { AdapterContext, CandidateRecord, EvidenceSpan, IProjectAdapter } f
 import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
 import { TypeScriptTreeSitterParser } from '../../scanner/languages/typescript/TypeScriptTreeSitterParser.js';
 import type { ImportDecl, ParsedFile, ParsedSymbol } from '../../scanner/core/ILanguageParser.js';
+import { createExtractionError, type AdapterExtractionError } from './IProjectAdapter.js';
+
+/** Adapter identity constants for provenance tracking */
+const ADAPTER_ID = 'typescript-adapter';
+const ADAPTER_VERSION = '1.0.0';
 
 interface ParsedTsFile {
   filePath: string;
@@ -26,18 +31,53 @@ function makeEvidence(filePath: string, line: number, excerpt: string, role: Evi
   };
 }
 
+/**
+ * TypeScriptAdapter — Extracts facts from TypeScript/JavaScript source files.
+ *
+ * Emits findings and evidence only — does NOT assign trust semantics.
+ * Implements structured error handling (EXTRACTION_FAILED) with continue-on-error.
+ *
+ * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+ */
 export class TypeScriptAdapter implements IProjectAdapter {
   private readonly parser = new TypeScriptTreeSitterParser();
 
+  /** Collected extraction errors for the current extraction run */
+  private extractionErrors: AdapterExtractionError[] = [];
+
+  /** Returns errors from the last extraction run */
+  getExtractionErrors(): AdapterExtractionError[] {
+    return [...this.extractionErrors];
+  }
+
   async parse(paths: string[]): Promise<ParsedTsFile[]> {
-    return Promise.all(paths.map(async (p) => {
-      const content = await readFile(p, 'utf-8');
-      const parsed = await this.parser.parse(content, p);
-      if (parsed.errors.length > 0) {
-        console.warn(`[crg] parser backend ${this.parser.backendId} diagnostics for ${p}: ${parsed.errors.map((e) => e.message).join('; ')}`);
+    this.extractionErrors = [];
+    const results: ParsedTsFile[] = [];
+
+    for (const p of paths) {
+      try {
+        const content = await readFile(p, 'utf-8');
+        const parsed = await this.parser.parse(content, p);
+        if (parsed.errors.length > 0) {
+          console.warn(`[crg] parser backend ${this.parser.backendId} diagnostics for ${p}: ${parsed.errors.map((e) => e.message).join('; ')}`);
+        }
+        results.push({ filePath: p, parsed });
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            p,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
       }
-      return { filePath: p, parsed };
-    }));
+    }
+
+    return results;
   }
 
   async extract(parsed: unknown, context: AdapterContext): Promise<CandidateRecord[]> {
@@ -45,14 +85,28 @@ export class TypeScriptAdapter implements IProjectAdapter {
     const candidates: CandidateRecord[] = [];
 
     for (const file of files) {
-      for (const symbol of file.parsed.symbols) {
-        const candidate = this.symbolToCandidate(symbol, file.filePath, context);
-        if (nodeTypeRegistry.has(candidate.candidate_type)) candidates.push(candidate);
-      }
+      try {
+        for (const symbol of file.parsed.symbols) {
+          const candidate = this.symbolToCandidate(symbol, file.filePath, context);
+          if (nodeTypeRegistry.has(candidate.candidate_type)) candidates.push(candidate);
+        }
 
-      for (const imp of file.parsed.imports) {
-        const candidate = this.importToCandidate(imp, file.filePath, context);
-        if (nodeTypeRegistry.has(candidate.candidate_type)) candidates.push(candidate);
+        for (const imp of file.parsed.imports) {
+          const candidate = this.importToCandidate(imp, file.filePath, context);
+          if (nodeTypeRegistry.has(candidate.candidate_type)) candidates.push(candidate);
+        }
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            file.filePath,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
       }
     }
 
@@ -64,6 +118,7 @@ export class TypeScriptAdapter implements IProjectAdapter {
   }
 
   async classify(candidates: CandidateRecord[]): Promise<CandidateRecord[]> {
+    // Adapters do NOT assign trust semantics — emit findings and evidence only
     return candidates;
   }
 
@@ -86,7 +141,17 @@ export class TypeScriptAdapter implements IProjectAdapter {
       extractor: this.parser.backendId,
       evidence: [makeEvidence(filePath, line, imp.module)],
       is_entrypoint: false,
-      lang_meta: { kind: 'import', module: imp.module, symbols: imp.symbols ?? [] },
+      lang_meta: {
+        kind: 'import',
+        module: imp.module,
+        symbols: imp.symbols ?? [],
+        // Full provenance fields
+        extraction_method: 'ast' as const,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence: 0.95,
+        record_type: 'node' as const,
+      },
     };
   }
 
@@ -110,7 +175,18 @@ export class TypeScriptAdapter implements IProjectAdapter {
       http_path: this.extractRoutePath(symbol),
       annotations: symbol.annotations,
       domain,
-      lang_meta: { kind: symbol.kind, parserBackend: this.parser.backendId, isPublic: symbol.isPublic, derived_domain: domain },
+      lang_meta: {
+        kind: symbol.kind,
+        parserBackend: this.parser.backendId,
+        isPublic: symbol.isPublic,
+        derived_domain: domain,
+        // Full provenance fields
+        extraction_method: 'ast' as const,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence: 0.95,
+        record_type: 'node' as const,
+      },
     };
   }
 

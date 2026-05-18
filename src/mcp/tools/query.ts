@@ -5,8 +5,19 @@ import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryServi
 import { registerTool } from './runtime.js';
 import type { QueryMode } from '../../core/types.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
+import { StructuredAskEngine } from '../../core/ask/StructuredAskEngine.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
+
+/**
+ * Creates a StructuredAskEngine instance backed by TrustedQueryService.
+ * Used by query tools to route through the structured ask layer for
+ * trust-aware reasoning with full QueryResult semantics.
+ */
+function createAskEngine(): StructuredAskEngine {
+  const service = getTrustedQueryService(getDB(resolveDbPath()));
+  return new StructuredAskEngine((workspaceId) => service.engine(workspaceId));
+}
 
 export function registerQueryTools(): void {
   registerTool({
@@ -29,9 +40,17 @@ export function registerQueryTools(): void {
         operation: z.enum(['ask', 'impact', 'lineage', 'wiki', 'governance']).optional(),
         mode: QueryModeSchema
       }).parse(args);
-      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
-      const operation = OperationResolver.resolve({ caller: 'mcp.query.get_node', requested: input.operation, requireExplicit: true });
-      return engine.getNode(input.nodeId, operation, input.mode as QueryMode);
+      // Validate caller registration and require explicit operation through OperationResolver
+      const resolvedOp = OperationResolver.resolve({ caller: 'mcp.query.get_node', requested: input.operation, requireExplicit: true });
+      // Route through StructuredAskEngine for trust-aware reasoning with full QueryResult semantics
+      const askEngine = createAskEngine();
+      return askEngine.ask({
+        question: input.nodeId,
+        workspace: input.workspaceId,
+        queryType: 'what-is-symbol',
+        mode: input.mode as QueryMode,
+        operation: resolvedOp,
+      });
     },
   });
 
@@ -57,9 +76,17 @@ export function registerQueryTools(): void {
         operation: z.enum(['ask', 'impact', 'lineage', 'wiki', 'governance']).optional(),
         mode: QueryModeSchema
       }).parse(args);
-      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
-      const operation = OperationResolver.resolve({ caller: 'mcp.query.get_neighbors', requested: input.operation, requireExplicit: true });
-      return engine.analyzeImpact(input.nodeId, operation, input.mode as QueryMode, input.depth ?? 1);
+      // Validate caller registration and require explicit operation through OperationResolver
+      const resolvedOp = OperationResolver.resolve({ caller: 'mcp.query.get_neighbors', requested: input.operation, requireExplicit: true });
+      // Route through StructuredAskEngine with 'what-depends-on' query type for impact analysis
+      const askEngine = createAskEngine();
+      return askEngine.ask({
+        question: input.nodeId,
+        workspace: input.workspaceId,
+        queryType: 'what-depends-on',
+        mode: input.mode as QueryMode,
+        operation: resolvedOp,
+      });
     },
   });
 
@@ -85,9 +112,17 @@ export function registerQueryTools(): void {
         operation: z.enum(['ask', 'impact', 'lineage', 'wiki', 'governance']).optional(),
         mode: QueryModeSchema
       }).parse(args);
-      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
-      const operation = OperationResolver.resolve({ caller: 'mcp.query.get_path', requested: input.operation, requireExplicit: true });
-      return engine.findReasoningPaths(input.fromId, input.toId, operation, input.mode as QueryMode);
+      // Validate caller registration and require explicit operation through OperationResolver
+      const resolvedOp = OperationResolver.resolve({ caller: 'mcp.query.get_path', requested: input.operation, requireExplicit: true });
+      // Route through StructuredAskEngine with 'lineage' query type for path finding
+      const askEngine = createAskEngine();
+      return askEngine.ask({
+        question: `${input.fromId} -> ${input.toId}`,
+        workspace: input.workspaceId,
+        queryType: 'lineage',
+        mode: input.mode as QueryMode,
+        operation: resolvedOp,
+      });
     },
   });
 
@@ -111,9 +146,17 @@ export function registerQueryTools(): void {
         operation: z.enum(['ask', 'impact', 'lineage', 'wiki', 'governance']).optional(),
         mode: QueryModeSchema
       }).parse(args);
-      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
-      const operation = OperationResolver.resolve({ caller: 'mcp.query.get_callers', requested: input.operation, requireExplicit: true });
-      return engine.findCallers(input.symbol, operation, input.mode as QueryMode);
+      // Validate caller registration and require explicit operation through OperationResolver
+      const resolvedOp = OperationResolver.resolve({ caller: 'mcp.query.get_callers', requested: input.operation, requireExplicit: true });
+      // Route through StructuredAskEngine with 'what-route-calls' query type for caller analysis
+      const askEngine = createAskEngine();
+      return askEngine.ask({
+        question: input.symbol,
+        workspace: input.workspaceId,
+        queryType: 'what-route-calls',
+        mode: input.mode as QueryMode,
+        operation: resolvedOp,
+      });
     },
   });
 }

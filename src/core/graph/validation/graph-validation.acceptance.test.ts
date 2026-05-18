@@ -9,6 +9,7 @@ const aiProv = { source: 'ai', artifact_source: 'f', producer_stage: 'enrich', t
 
 function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, 'id' | 'graph_kind' | 'confidence_band'>): GraphNode {
   return {
+    stableKey: overrides.graph_kind === 'exploratory' || overrides.graph_kind === 'external' ? null : overrides.id,
     workspace: 'w1', project: 'p1', label: overrides.id, type: 'function',
     trust_level: 'AUTHORITATIVE', provenance: parserProv,
     ...overrides,
@@ -17,6 +18,7 @@ function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, 'id' | 'graph_
 
 function makeEdge(overrides: Partial<GraphEdge> & Pick<GraphEdge, 'id' | 'graph_kind' | 'confidence_band' | 'type'>): GraphEdge {
   return {
+    stableKey: overrides.graph_kind === 'exploratory' || overrides.graph_kind === 'external' ? null : overrides.id,
     workspace: 'w1', from_id: 'n1', to_id: 'n2',
     trust_level: 'AUTHORITATIVE', provenance: parserProv,
     ...overrides,
@@ -144,7 +146,7 @@ describe('GraphValidator acceptance', () => {
     });
 
     it('flags edge with unknown type semantic_match', () => {
-      const edge = makeEdge({ id: 'e1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'semantic_match' as any });
+      const edge = makeEdge({ id: 'e1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'nonexistent_edge_type' as any });
       const { issues } = GraphValidator.validate([], [edge]);
       expect(issues.some((i) => i.code === 'INVALID_EDGE_TYPE' && i.edgeId === 'e1')).toBe(true);
     });
@@ -212,7 +214,7 @@ describe('GraphValidator acceptance', () => {
   describe('7. Machine-readable codes', () => {
     it('all issue codes are non-empty uppercase strings', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', provenance: analysisProv });
-      const edge = makeEdge({ id: 'e1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'semantic_match' as any, provenance: analysisProv });
+      const edge = makeEdge({ id: 'e1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE', type: 'nonexistent_edge_type' as any, provenance: analysisProv });
       const { issues } = GraphValidator.validate([node], [edge]);
       for (const issue of issues) {
         expect(typeof issue.code).toBe('string');
@@ -230,7 +232,7 @@ describe('GovernanceValidator acceptance', () => {
     it('flags exploratory authority edge with AUTHORITY_CHAIN_BROKEN', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const edge: GraphEdge = {
-        id: 'auth-edge', workspace: 'w1', from_id: 'n1', to_id: 'n2',
+        id: 'auth-edge', stableKey: null, workspace: 'w1', from_id: 'n1', to_id: 'n2',
         type: 'uses_authority', graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY', provenance: aiProv,
       };
@@ -243,7 +245,7 @@ describe('GovernanceValidator acceptance', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const authorityNode = makeNode({ id: 'n2', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const exploratoryAuth: GraphEdge = {
-        id: 'auth-exp', workspace: 'w1', from_id: 'n1', to_id: 'n2',
+        id: 'auth-exp', stableKey: null, workspace: 'w1', from_id: 'n1', to_id: 'n2',
         type: 'node_uses_authority', graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY', provenance: aiProv,
       };
@@ -256,7 +258,7 @@ describe('GovernanceValidator acceptance', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const authorityNode = makeNode({ id: 'n2', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const canonicalAuth: GraphEdge = {
-        id: 'auth-can', workspace: 'w1', from_id: 'n1', to_id: 'n2',
+        id: 'auth-can', stableKey: 'auth-can', workspace: 'w1', from_id: 'n1', to_id: 'n2',
         type: 'uses_authority', graph_kind: 'canonical',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE', provenance: parserProv,
       };
@@ -267,7 +269,7 @@ describe('GovernanceValidator acceptance', () => {
     it('flags authority edge with a missing endpoint', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const danglingAuth: GraphEdge = {
-        id: 'auth-dangling', workspace: 'w1', from_id: 'n1', to_id: 'missing-node',
+        id: 'auth-dangling', stableKey: 'auth-dangling', workspace: 'w1', from_id: 'n1', to_id: 'missing-node',
         type: 'uses_authority', graph_kind: 'canonical',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE', provenance: parserProv,
       };
@@ -324,7 +326,7 @@ describe('GovernanceValidator acceptance', () => {
     it('non-authority edge types are ignored by governance validator', () => {
       const node = makeNode({ id: 'n1', graph_kind: 'canonical', confidence_band: 'AUTHORITATIVE' });
       const callEdge: GraphEdge = {
-        id: 'call', workspace: 'w1', from_id: 'n1', to_id: 'n2',
+        id: 'call', stableKey: null, workspace: 'w1', from_id: 'n1', to_id: 'n2',
         type: 'calls', graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY', provenance: aiProv,
       };

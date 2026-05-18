@@ -142,6 +142,7 @@ export function minimalContext(nodes: GraphNode[], edges: GraphEdge[], targets: 
 export function flowMembershipEdges(workspaceId: string, flows: FlowSummary[]): GraphEdge[] {
   return flows.flatMap((flow) => flow.nodeIds.map((nodeId) => ({
     id: `edge:${flow.id}:${nodeId}`,
+    stableKey: `edge:${flow.id}:${nodeId}`,
     workspace: workspaceId,
     from_id: nodeId,
     to_id: flow.id,

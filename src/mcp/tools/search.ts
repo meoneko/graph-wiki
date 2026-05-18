@@ -5,8 +5,19 @@ import { registerTool } from './runtime.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
+import { StructuredAskEngine } from '../../core/ask/StructuredAskEngine.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
+
+/**
+ * Creates a StructuredAskEngine instance backed by TrustedQueryService.
+ * Used by the search tool to route through the structured ask layer
+ * with 'what-is-symbol' query type for trust-aware search.
+ */
+function createAskEngine(): StructuredAskEngine {
+  const service = getTrustedQueryService(getDB(resolveDbPath()));
+  return new StructuredAskEngine((workspaceId) => service.engine(workspaceId));
+}
 
 export function registerSearchTools(): void {
   registerTool({
@@ -27,9 +38,17 @@ export function registerSearchTools(): void {
         workspaceId: z.string(),
         mode: QueryModeSchema
       }).parse(args);
-      const engine = getTrustedQueryService(getDB(resolveDbPath())).engine(input.workspaceId);
-      const operation = OperationResolver.resolve({ caller: 'mcp.search.search' });
-      return engine.searchNodes(input.query, operation, input.mode as QueryMode, 50);
+      // Validate caller registration through OperationResolver
+      OperationResolver.resolve({ caller: 'mcp.search.search' });
+      // Route through StructuredAskEngine with 'what-is-symbol' query type
+      // for trust-aware search with full QueryResult semantics
+      const askEngine = createAskEngine();
+      return askEngine.ask({
+        question: input.query,
+        workspace: input.workspaceId,
+        queryType: 'what-is-symbol',
+        mode: input.mode as QueryMode,
+      });
     },
   });
 }

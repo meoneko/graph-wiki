@@ -4,6 +4,11 @@ import path from 'node:path';
 import YAML from 'yaml';
 import type { AdapterContext, CandidateRecord, EvidenceSpan, IProjectAdapter } from '../../core/types.js';
 import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
+import { createExtractionError, type AdapterExtractionError } from './IProjectAdapter.js';
+
+/** Adapter identity constants for provenance tracking */
+const ADAPTER_ID = 'structured-file-adapter';
+const ADAPTER_VERSION = '1.0.0';
 
 interface ParsedStructuredFile {
   filePath: string;
@@ -41,14 +46,94 @@ function flattenObject(value: unknown, prefix = ''): Array<{ key: string; value:
   return out;
 }
 
+/**
+ * Resolves the extraction method for a given extractor identifier.
+ */
+function resolveExtractionMethod(extractor: string): 'ast' | 'static-analysis' | 'regex' | 'doc-parse' | 'manual' {
+  if (extractor.includes('openapi') || extractor.includes('markdown') || extractor.includes('doc')) return 'doc-parse';
+  if (extractor.includes('regex') || extractor.includes('sql') || extractor.includes('terraform') || extractor.includes('dockerfile') || extractor.includes('graphql')) return 'regex';
+  return 'static-analysis';
+}
+
+/**
+ * Resolves the confidence for a given extraction method.
+ */
+function confidenceForMethod(method: 'ast' | 'static-analysis' | 'regex' | 'doc-parse' | 'manual'): number {
+  switch (method) {
+    case 'ast': return 0.95;
+    case 'static-analysis': return 0.85;
+    case 'doc-parse': return 0.80;
+    case 'regex': return 0.70;
+    case 'manual': return 0.70;
+  }
+}
+
+/**
+ * StructuredFileAdapter — Extracts facts from structured files (JSON, YAML, TOML, env, SQL, etc.).
+ *
+ * Emits findings and evidence only — does NOT assign trust semantics.
+ * Implements structured error handling (EXTRACTION_FAILED) with continue-on-error.
+ *
+ * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+ */
 export class StructuredFileAdapter implements IProjectAdapter {
+  /** Collected extraction errors for the current extraction run */
+  private extractionErrors: AdapterExtractionError[] = [];
+
+  /** Returns errors from the last extraction run */
+  getExtractionErrors(): AdapterExtractionError[] {
+    return [...this.extractionErrors];
+  }
+
   async parse(paths: string[]): Promise<ParsedStructuredFile[]> {
-    return Promise.all(paths.map(async (p) => ({ filePath: p, content: await readFile(p, 'utf-8') })));
+    this.extractionErrors = [];
+    const results: ParsedStructuredFile[] = [];
+
+    for (const p of paths) {
+      try {
+        const content = await readFile(p, 'utf-8');
+        results.push({ filePath: p, content });
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            p,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
+      }
+    }
+
+    return results;
   }
 
   async extract(parsed: unknown, context: AdapterContext): Promise<CandidateRecord[]> {
     const files = parsed as ParsedStructuredFile[];
-    return files.flatMap((file) => this.extractFile(file, context));
+    const candidates: CandidateRecord[] = [];
+
+    for (const file of files) {
+      try {
+        candidates.push(...this.extractFile(file, context));
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            file.filePath,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
+      }
+    }
+
+    return candidates;
   }
 
   async enrich(candidates: CandidateRecord[]): Promise<CandidateRecord[]> {
@@ -56,6 +141,7 @@ export class StructuredFileAdapter implements IProjectAdapter {
   }
 
   async classify(candidates: CandidateRecord[]): Promise<CandidateRecord[]> {
+    // Adapters do NOT assign trust semantics — emit findings and evidence only
     return candidates;
   }
 
@@ -75,6 +161,8 @@ export class StructuredFileAdapter implements IProjectAdapter {
   ): CandidateRecord | undefined {
     if (!nodeTypeRegistry.has(type)) return undefined;
     const line = lineOf(file.content, excerpt);
+    const extractionMethod = resolveExtractionMethod(extractor);
+    const confidence = confidenceForMethod(extractionMethod);
     return {
       candidate_id: stableId(type, file.filePath, symbol, String(line)),
       candidate_type: type,
@@ -87,7 +175,15 @@ export class StructuredFileAdapter implements IProjectAdapter {
       status: 'candidate',
       extractor,
       evidence: [evidence(file.filePath, line, excerpt, role)],
-      lang_meta: meta,
+      lang_meta: {
+        ...meta,
+        // Full provenance fields
+        extraction_method: extractionMethod,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence,
+        record_type: 'node' as const,
+      },
     };
   }
 
@@ -110,7 +206,7 @@ export class StructuredFileAdapter implements IProjectAdapter {
     try {
       const parsed = JSON.parse(file.content);
       const isAppSettings = /appsettings.*\.json$/i.test(path.basename(file.filePath));
-      return flattenObject(parsed)
+      const candidates = flattenObject(parsed)
         .map(({ key }) => this.makeCandidate(
           context,
           file,
@@ -121,7 +217,24 @@ export class StructuredFileAdapter implements IProjectAdapter {
           key.split(':').at(-1) ?? key,
         ))
         .filter((c): c is CandidateRecord => Boolean(c));
-    } catch {
+
+      // Check for OpenAPI spec in JSON
+      if (parsed?.openapi && parsed?.paths && typeof parsed.paths === 'object') {
+        candidates.push(...this.extractOpenApiObject(file, context, parsed, 'json_config_parser'));
+      }
+
+      return candidates;
+    } catch (err) {
+      // Structured error: emit EXTRACTION_FAILED for unparseable JSON
+      this.extractionErrors.push(
+        createExtractionError(
+          file.filePath,
+          `Failed to parse JSON: ${err instanceof Error ? err.message : String(err)}`,
+          ADAPTER_ID,
+          ADAPTER_VERSION,
+          err,
+        ),
+      );
       return [];
     }
   }
@@ -142,7 +255,17 @@ export class StructuredFileAdapter implements IProjectAdapter {
         candidates.push(...this.extractOpenApiObject(file, context, parsed, 'yaml_config_parser'));
       }
       return candidates;
-    } catch {
+    } catch (err) {
+      // Structured error: emit EXTRACTION_FAILED for unparseable YAML
+      this.extractionErrors.push(
+        createExtractionError(
+          file.filePath,
+          `Failed to parse YAML: ${err instanceof Error ? err.message : String(err)}`,
+          ADAPTER_ID,
+          ADAPTER_VERSION,
+          err,
+        ),
+      );
       return [];
     }
   }

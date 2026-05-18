@@ -13,6 +13,7 @@ const provenance: Provenance = {
 function node(id: string, sourceFile: string): GraphNode {
   return {
     id,
+    stableKey: id,
     workspace: 'ws',
     project: 'p',
     label: id,
@@ -29,6 +30,7 @@ function node(id: string, sourceFile: string): GraphNode {
 function edge(id: string, fromId: string, toId: string, workspace = 'ws'): GraphEdge {
   return {
     id,
+    stableKey: id,
     workspace,
     from_id: fromId,
     to_id: toId,

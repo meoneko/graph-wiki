@@ -8,3 +8,4 @@ knowledge/
 .env
 .claude/
 packages/vscode-extension/*.vsix
+.kiro/

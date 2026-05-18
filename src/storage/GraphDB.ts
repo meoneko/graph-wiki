@@ -3,6 +3,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { GraphEdge, GraphNode, NormalizedFact } from '../core/types.js';
 
+/**
+ * Input types for upsert operations. stableKey defaults to null when omitted,
+ * which is correct for exploratory/external nodes/edges. Canonical/derived code
+ * should always provide an explicit stableKey.
+ */
+export type GraphNodeInput = Omit<GraphNode, 'stableKey'> & { stableKey?: string | null };
+export type GraphEdgeInput = Omit<GraphEdge, 'stableKey'> & { stableKey?: string | null };
+
 // ── Embedded migrations (no file-read risk in dist builds) ────────────────────
 
 const BOOTSTRAP_SQL = `
@@ -138,11 +146,19 @@ const MIGRATION_0004 = `
 ALTER TABLE nodes ADD COLUMN metadata TEXT;
 `;
 
+const MIGRATION_0005 = `
+ALTER TABLE nodes ADD COLUMN stable_key TEXT;
+ALTER TABLE edges ADD COLUMN stable_key TEXT;
+ALTER TABLE nodes ADD COLUMN confidence_score REAL;
+ALTER TABLE edges ADD COLUMN confidence_score REAL;
+`;
+
 const MIGRATIONS: Array<{ version: string; sql: string }> = [
   { version: '0001_init', sql: MIGRATION_0001 },
   { version: '0002_updated_at', sql: MIGRATION_0002 },
   { version: '0003_trust_level', sql: MIGRATION_0003 },
   { version: '0004_node_metadata', sql: MIGRATION_0004 },
+  { version: '0005_stable_key_confidence_score', sql: MIGRATION_0005 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -224,16 +240,16 @@ export class GraphDB {
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
 
-  upsertNode(node: GraphNode): void {
-    const row = mapNodeToDB(node);
+  upsertNode(node: GraphNodeInput): void {
+    const row = mapNodeToDB(node as GraphNode);
     this.db.prepare(`
-      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, metadata, provenance, updated_at)
-      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @metadata, @provenance, @updated_at)
+      INSERT INTO nodes(id, workspace, project, label, type, graph_kind, confidence, confidence_score, trust_level, source_file, symbol, http_method, http_path, domain, lang_meta, metadata, provenance, stable_key, updated_at)
+      VALUES (@id, @workspace, @project, @label, @type, @graph_kind, @confidence, @confidence_score, @trust_level, @source_file, @symbol, @http_method, @http_path, @domain, @lang_meta, @metadata, @provenance, @stable_key, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, project=excluded.project, label=excluded.label, type=excluded.type,
-        graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level, source_file=excluded.source_file,
+        graph_kind=excluded.graph_kind, confidence=excluded.confidence, confidence_score=excluded.confidence_score, trust_level=excluded.trust_level, source_file=excluded.source_file,
         symbol=excluded.symbol, http_method=excluded.http_method, http_path=excluded.http_path,
-        domain=excluded.domain, lang_meta=excluded.lang_meta, metadata=excluded.metadata, provenance=excluded.provenance, updated_at=excluded.updated_at
+        domain=excluded.domain, lang_meta=excluded.lang_meta, metadata=excluded.metadata, provenance=excluded.provenance, stable_key=excluded.stable_key, updated_at=excluded.updated_at
     `).run({ ...row, updated_at: node.updated_at || new Date().toISOString() });
 
     this.db.prepare(`
@@ -280,15 +296,15 @@ export class GraphDB {
 
   // ── Edges ─────────────────────────────────────────────────────────────────
 
-  upsertEdge(edge: GraphEdge): void {
-    const row = mapEdgeToDB(edge);
+  upsertEdge(edge: GraphEdgeInput): void {
+    const row = mapEdgeToDB(edge as GraphEdge);
     this.db.prepare(`
-      INSERT INTO edges(id, workspace, from_id, to_id, type, graph_kind, confidence, trust_level, metadata, provenance, updated_at)
-      VALUES (@id, @workspace, @from_id, @to_id, @type, @graph_kind, @confidence, @trust_level, @metadata, @provenance, @updated_at)
+      INSERT INTO edges(id, workspace, from_id, to_id, type, graph_kind, confidence, confidence_score, trust_level, metadata, provenance, stable_key, updated_at)
+      VALUES (@id, @workspace, @from_id, @to_id, @type, @graph_kind, @confidence, @confidence_score, @trust_level, @metadata, @provenance, @stable_key, @updated_at)
       ON CONFLICT(id) DO UPDATE SET
         workspace=excluded.workspace, from_id=excluded.from_id, to_id=excluded.to_id,
-        type=excluded.type, graph_kind=excluded.graph_kind, confidence=excluded.confidence, trust_level=excluded.trust_level,
-        metadata=excluded.metadata, provenance=excluded.provenance, updated_at=excluded.updated_at
+        type=excluded.type, graph_kind=excluded.graph_kind, confidence=excluded.confidence, confidence_score=excluded.confidence_score, trust_level=excluded.trust_level,
+        metadata=excluded.metadata, provenance=excluded.provenance, stable_key=excluded.stable_key, updated_at=excluded.updated_at
     `).run({ ...row, updated_at: edge.updated_at || new Date().toISOString() });
   }
 
@@ -426,7 +442,7 @@ export class GraphDB {
   searchNodesFTS(query: string, workspace?: string, limit = 20): GraphNode[] {
     const rows = workspace
       ? this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.rowid = f.rowid WHERE nodes_fts MATCH ? AND n.workspace = ? LIMIT ?').all(query, workspace, limit)
-      : this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.id = f.id WHERE nodes_fts MATCH ? LIMIT ?').all(query, limit);
+      : this.db.prepare('SELECT n.* FROM nodes_fts f JOIN nodes n ON n.rowid = f.rowid WHERE nodes_fts MATCH ? LIMIT ?').all(query, limit);
     return (rows as Record<string, unknown>[]).map((r) => mapNodeFromDB(r));
   }
 

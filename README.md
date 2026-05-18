@@ -8,12 +8,13 @@ Parses your codebase into a SQLite knowledge graph, then exposes it via a CLI, a
 
 ## Features
 
-- **8-stage pipeline** — sync → extract → validate → build graph → AI enrich → verify → wiki → report
+- **12-stage pipeline** — sync → extract → normalize → validate → build graph (canonical/derived/exploratory/flows) → AI enrich → verify → wiki → report
 - **Tree-sitter parsing** — AST-accurate extraction for C# (controllers, use cases, DTOs, minimal APIs, partial classes, extension methods, top-level statements) and TypeScript/React (routes, API calls)
+- **Trust layering** — three graph kinds (canonical/derived/exploratory) with per-mode traversal policies; authoritative, mixed_safe, and exploratory query modes
 - **SQLite storage** — local-first, no external services required; FTS5 full-text search + vector embeddings
 - **Impact analysis** — blast radius BFS, risk scoring, git diff → affected node mapping
-- **MCP server** — 8 core tools callable from Claude Desktop or any MCP client
-- **CLI binary** (`crg`) — build, watch, ask, impact, stats, search, export
+- **MCP server** — 32 tools callable from Claude Desktop or any MCP client
+- **CLI binary** (`crg`) — build, watch, ask, impact, stats, search, export, architecture review, drift detection, and more
 - **Multi-workspace** — manage multiple repos (backend + frontend + other services) from one config
 - **AI enrichment** — optional OpenRouter/Gemini enrichment pass over extracted facts
 - **Export** — GraphML, Obsidian vault, Neo4j Cypher
@@ -89,15 +90,69 @@ outputs:
 ## CLI Reference
 
 ```
-crg build [workspace] [--incremental]   Build or incrementally update the graph
-crg watch [workspace]                   Watch mode — rebuild on file change
-crg ask <question> [--workspace <id>]   Look up a node by name
-crg impact [--diff base..head]          Show impact report for a git range
-crg stats [workspace]                   Node/edge counts
-crg search <query> [--workspace <id>]   Full-text search over nodes
-crg wiki [workspace]                    Regenerate wiki output
-crg serve-mcp                           Start MCP server (stdio)
+crg build [workspace] [--incremental]
+    Run the full pipeline (sync through report)
+
+crg sync [--workspace <id>]
+    Copy/link source files only
+
+crg extract [--workspace <id>]
+    Run sync + extract stages
+
+crg normalize [--workspace <id>]
+    Run sync + extract + normalize stages
+
+crg validate [--workspace <id>]
+    Run sync + extract + normalize + validate stages
+
+crg graph [--workspace <id>]
+    Run sync through all graph build stages (canonical, derived, exploratory, flows)
+
+crg watch [workspace]
+    Rebuild on file change
+
+crg ask <question> [--workspace <id>] [--query-type <type>] [--mode <mode>]
+    Query types: what-is-symbol, what-depends-on, what-route-calls,
+                 lineage, impact, why-canonical, why-insufficient-context
+    Modes: authoritative (default), mixed_safe, exploratory
+
+crg agent-context <task> [--workspace <id>] [--mode <mode>]
+                         [--max-nodes <n>] [--max-edges <n>] [--max-suggestions <n>]
+    Build trust-aware context bundle for an agent task
+
+crg impact [--diff <base..head>] [--workspace <id>]
+    Impact report for a git range (default: HEAD~1..HEAD)
+
+crg drift [--workspace <id>]
+    Detect drift against stored baseline
+
+crg verify [--workspace <id>]
+    Run governance validation and graph invariant checks
+
+crg wiki [--workspace <id>]
+    Generate trust-aware wiki pages
+
+crg report [--workspace <id>] [--type <type>]
+    Report types: quality, verification, lint, digest, metrics,
+                  edge-health, ask-readiness, agent-context-readiness, all (default)
+
+crg review-architecture [workspace] [--mode <mode>] [--output <path>] [--json] [--fail-on-critical]
+    Analyze module boundaries, dependency cycles, layer violations, dead code, flow complexity
+
+crg stats [workspace]
+    Node/edge counts and metrics
+
+crg search <query> [--workspace <id>]
+    Full-text search over nodes
+
+crg serve-mcp
+    Start MCP server (stdio)
+
+crg register <repoPath>
+    Register a repo in the multi-repo registry
+
 crg export [--format graphml|obsidian|neo4j] [--workspace <id>]
+    Export graph to external format
 ```
 
 ---
@@ -106,16 +161,74 @@ crg export [--format graphml|obsidian|neo4j] [--workspace <id>]
 
 When running `crg serve-mcp`, the following tools are available to Claude:
 
+**Build**
 | Tool | Description |
 |---|---|
-| `build_graph` | Build or incrementally update the graph |
-| `get_node` | Fetch a single node by ID |
-| `get_neighbors` | Get neighbouring nodes up to N hops |
-| `get_lineage` | Upstream/downstream lineage from a node |
-| `search_nodes` | Full-text search |
-| `review_diff` | Impact report from raw diff text |
-| `get_blast_radius` | BFS blast radius from a node |
-| `get_graph_stats` | Node/edge counts and metrics |
+| `list_workspaces` | List all configured workspaces |
+| `build_graph` | Run full pipeline build for a workspace |
+| `update_graph` | Run incremental pipeline update |
+| `run_postprocess` | Regenerate artifacts, wiki, and caches for an existing graph |
+| `watch_graph` | Start graph watch mode |
+
+**Query**
+| Tool | Description |
+|---|---|
+| `get_node` | Get a node by ID with trust-aware visibility |
+| `get_neighbors` | Get trust-aware neighbors of a node |
+| `get_path` | Find reasoning paths between two nodes |
+| `get_callers` | Find trust-aware callers of a symbol |
+
+**Search**
+| Tool | Description |
+|---|---|
+| `search` | Full-text search over visible graph nodes with trust filtering |
+
+**Review & Impact**
+| Tool | Description |
+|---|---|
+| `detect_changes` | Analyze a raw git diff for trust-aware change impact |
+| `review_diff` | Review raw diff text with trust boundary |
+| `review_pr` | Review impact by git range |
+| `blast_radius` | BFS blast radius from a single node ID |
+| `get_risk_score` | Compute risk score for a node set |
+
+**Graph Analysis**
+| Tool | Description |
+|---|---|
+| `graph_stats` | Graph statistics filtered by trust mode |
+| `architecture_overview` | Architecture overview markdown with trust filtering |
+| `list_communities` | List graph communities |
+| `get_community` | Get nodes in a graph community |
+| `find_hubs` | Find high-degree nodes within trust boundary |
+| `find_bridges` | Find cross-domain edges within trust boundary |
+| `find_gaps` | Find nodes with zero outbound edges |
+
+**Flows**
+| Tool | Description |
+|---|---|
+| `list_flows` | List derived business flows for a workspace |
+| `get_flow` | Get nodes and edges for a business flow |
+| `get_affected_flows` | Find flows affected by changed files, node IDs, or symbols |
+| `get_minimal_context` | Bounded context subgraph around targets |
+| `get_lineage` | Trace upstream and downstream graph neighbors |
+
+**Wiki**
+| Tool | Description |
+|---|---|
+| `get_wiki_page` | Get wiki page for a node (trust-aware) |
+| `generate_wiki` | Generate trust-aware wiki for a workspace |
+
+**Refactor**
+| Tool | Description |
+|---|---|
+| `rename_preview` | Preview symbol rename impact |
+| `find_dead_code` | Find unreferenced symbols |
+
+**Architecture**
+| Tool | Description |
+|---|---|
+| `architecture_review` | Full architecture review: module boundaries, cycles, layer violations, dead code |
+| `get_architecture_findings` | Get architecture findings with optional severity filter |
 
 ---
 
@@ -125,12 +238,20 @@ When running `crg serve-mcp`, the following tools are available to Claude:
 src/
   cli/              CLI entry point (crg)
   core/             Graph engine, query, reasoning, type registry
+    graph/
+      query/        TrustedQueryService, OperationResolver, TrustAwareQueryEngine
+      traversal/    EdgePolicyTable (trust-aware edge filtering)
+      analysis/     Community detection, centrality metrics, architecture review
+    ask/            StructuredAskEngine
+    agent/          AgentContextBuilder
+    drift/          DriftDetector
   scanner/          Tree-sitter parsers (C#, TypeScript)
-  pipeline/         8-stage pipeline + adapters + config
-    stages/         01_sync … 08_report
-    adapters/       CSharpAdapter, TSReactAdapter
+  pipeline/         12-stage pipeline + adapters + config
+    stages/         01_sync … 09_report
+    adapters/       CSharpAdapter, TypeScriptAdapter, StructuredFileAdapter
+    frameworks/     ASP.NET framework adapter
   storage/          SQLite (GraphDB, migrations, pathUtils)
-  mcp/              MCP server, tools, schemas
+  mcp/              MCP server, 32 registered tools
   export/           GraphML, Obsidian, Neo4j exporters
   registry/         Multi-repo registry
 packages/
@@ -149,12 +270,30 @@ knowledge.config.yaml
 |---|---|---|
 | 01 sync | `01_sync.ts` | Copy source files to `knowledge/sources/` |
 | 02 extract | `02_extract.ts` | Hash-based incremental extraction via adapters |
-| 03 validate | `03_validate.ts` | NodeType registry gate — unknown types → rejects table |
-| 04 build graph | `04a_build_canonical.ts`, `04b_build_derived.ts`, `04c_build_exploratory.ts` | Assemble multi-layer nodes + dependency edges into SQLite |
-| 05 enrich | `05_enrich.ts` | Optional AI enrichment pass (OpenRouter) |
-| 06 verify | `06_verify.ts` | Workspace verification rules (flows, coverage, parity) |
-| 07 wiki | `07_wiki.ts` | Generate markdown wiki to `knowledge/wiki/` |
-| 08 report | `08_report.ts` | Write `verification.json`, `digest.json`, `lint.json` |
+| 03 normalize | `03_normalize.ts` | Normalize candidates into typed NormalizedFacts |
+| 04 validate | `04_validate.ts` | NodeTypeRegistry gate — unknown types → rejects table |
+| 05a build canonical | `05a_build_canonical.ts` | Authoritative structural nodes/edges (parser-backed) |
+| 05b build derived | `05b_build_derived.ts` | Inferred relationships (cross-file analysis, framework adapters) |
+| 05c build exploratory | `05c_build_exploratory.ts` | Ambiguous/low-confidence relationships |
+| 05d build flows | `05d_build_flows.ts` | Synthetic `flow_domain` nodes and `belongs_to_flow` edges |
+| 06 enrich | `06_enrich.ts` | Optional AI enrichment pass (OpenRouter/Gemini) |
+| 07 verify | `07_verify.ts` | Workspace verification (flows, coverage, parity) |
+| 08 wiki | `08_wiki.ts` | Generate markdown wiki to `knowledge/wiki/` |
+| 09 report | `09_report.ts` | Write `verification.json`, `digest.json`, `lint.json`, `metrics.json` |
+
+---
+
+## Trust Model
+
+Every node and edge carries a `graph_kind` (canonical / derived / exploratory / external) and a `confidence_band` (AUTHORITATIVE / EXTRACTED / INFERRED / AMBIGUOUS). Query mode controls which data is visible:
+
+| Mode | Visible graph kinds | Confidence bands allowed |
+|---|---|---|
+| `authoritative` | canonical only (parser-backed) | AUTHORITATIVE only |
+| `mixed_safe` | canonical, derived, exploratory | AUTHORITATIVE, EXTRACTED, INFERRED (AMBIGUOUS only on exploratory edges; ≤2 exploratory hops) |
+| `exploratory` | all | All |
+
+All queries pass through `OperationResolver` (mandatory trust gate) before reaching `TrustedQueryService`.
 
 ---
 
@@ -163,7 +302,8 @@ knowledge.config.yaml
 | Language | Adapter | Extracts |
 |---|---|---|
 | C# | `CSharpAdapter` + tree-sitter | Controller actions, Minimal API routes, Use cases, DTOs, Interfaces, Classes, Partial classes, Extension methods, Top-level statements |
-| TypeScript / React | `TSReactAdapter` | Routes, API calls (fetch/axios) |
+| TypeScript / React | `TypeScriptAdapter` + tree-sitter | Routes, API calls (fetch/axios) |
+| JSON / YAML / SQL / Dockerfile / Terraform | `StructuredFileAdapter` | Config extraction |
 
 ---
 
@@ -181,7 +321,7 @@ knowledge.config.yaml
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | No | Enables AI enrichment in stage 05 |
+| `OPENROUTER_API_KEY` | No | Enables AI enrichment in stage 06 |
 
 ---
 
@@ -192,6 +332,6 @@ npm install
 npm run build        # tsc compile
 npm run dev          # run CLI via tsx (no build needed)
 npm run serve:mcp    # MCP server via tsx
-npm run test         # vitest
+npm test             # vitest
 npm run typecheck    # tsc --noEmit
 ```

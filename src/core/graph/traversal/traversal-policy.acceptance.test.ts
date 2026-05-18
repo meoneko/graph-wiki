@@ -4,31 +4,31 @@ import type { GraphNode, GraphEdge, OperationType, QueryMode } from '../../types
 
 describe('Operation-Aware Traversal Policy Acceptance Tests', () => {
     const canonicalNode: GraphNode = {
-        id: 'n1', workspace: 'w1', project: 'p1', label: 'N1', type: 'function', graph_kind: 'canonical',
+        id: 'n1', stableKey: 'n1', workspace: 'w1', project: 'p1', label: 'N1', type: 'function', graph_kind: 'canonical',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE',
         provenance: { source: 'parser', artifact_source: 's1', producer_stage: 'extract', timestamp: '2026-01-01' }
     };
 
     const exploratoryNode: GraphNode = {
-        id: 'n2', workspace: 'w1', project: 'p1', label: 'N2', type: 'function', graph_kind: 'exploratory',
+        id: 'n2', stableKey: null, workspace: 'w1', project: 'p1', label: 'N2', type: 'function', graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY',
         provenance: { source: 'ai', artifact_source: 's2', producer_stage: 'enrich', timestamp: '2026-01-01' }
     };
 
     const callEdge: GraphEdge = {
-        id: 'e1', workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'calls', graph_kind: 'canonical',
+        id: 'e1', stableKey: 'e1', workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'calls', graph_kind: 'canonical',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE',
         provenance: { source: 'parser', artifact_source: 's1', producer_stage: 'extract', timestamp: '2026-01-01' }
     };
 
     const importEdge: GraphEdge = {
-        id: 'e2', workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'imports', graph_kind: 'canonical',
+        id: 'e2', stableKey: 'e2', workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'imports', graph_kind: 'canonical',
         confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE',
         provenance: { source: 'parser', artifact_source: 's1', producer_stage: 'extract', timestamp: '2026-01-01' }
     };
 
     const exploratoryEdge: GraphEdge = {
-        id: 'e3', workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'calls', graph_kind: 'exploratory',
+        id: 'e3', stableKey: null, workspace: 'w1', from_id: 'n1', to_id: 'n2', type: 'calls', graph_kind: 'exploratory',
         confidence_band: 'AMBIGUOUS', trust_level: 'EXPLORATORY',
         provenance: { source: 'ai', artifact_source: 's2', producer_stage: 'enrich', timestamp: '2026-01-01' }
     };
@@ -69,8 +69,8 @@ describe('Operation-Aware Traversal Policy Acceptance Tests', () => {
     });
 
     describe('3. Operation Visibility', () => {
-        it('should hide exploratory nodes in wiki operation', () => {
-            expect(EdgePolicyTable.isNodeVisible(exploratoryNode, { operation: 'wiki', mode: 'mixed_safe' })).toBe(false);
+        it('should show exploratory nodes in mixed_safe mode (bounded at edge level)', () => {
+            expect(EdgePolicyTable.isNodeVisible(exploratoryNode, { operation: 'wiki', mode: 'mixed_safe' })).toBe(true);
         });
 
         it('should hide exploratory nodes in authoritative mode', () => {
@@ -128,8 +128,8 @@ describe('Operation-Aware Traversal Policy Acceptance Tests', () => {
 
     describe('8. Global Edge Taxonomy Guard', () => {
         const unknownTypeEdge: GraphEdge = {
-            id: 'e-unknown', workspace: 'w1', from_id: 'n1', to_id: 'n2',
-            type: 'semantic_match' as any,
+            id: 'e-unknown', stableKey: 'e-unknown', workspace: 'w1', from_id: 'n1', to_id: 'n2',
+            type: 'nonexistent_edge_type' as any,
             graph_kind: 'canonical',
             confidence_band: 'AUTHORITATIVE', trust_level: 'AUTHORITATIVE',
             provenance: { source: 'parser', artifact_source: 's1', producer_stage: 'extract', timestamp: '2026-01-01' }

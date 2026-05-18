@@ -29,8 +29,11 @@ function normalizeConfidence(nodes: GraphNode[], edges: GraphEdge[]): Confidence
   return hasNonAuthoritative ? 'MEDIUM' : 'HIGH';
 }
 
-function normalizeProvenance(nodes: GraphNode[], explicit?: QueryResult['provenance']['sources']): QueryResult['provenance']['sources'] {
-  const sources = explicit ?? nodes.map((node) => node.provenance);
+function normalizeProvenance(nodes: GraphNode[], explicit?: QueryResult['provenance']['sources'], edges?: GraphEdge[]): QueryResult['provenance']['sources'] {
+  const sources = explicit ?? [
+    ...nodes.map((node) => node.provenance),
+    ...(edges ?? []).map((edge) => edge.provenance),
+  ];
   const keyed = new Map<string, QueryResult['provenance']['sources'][number]>();
   for (const source of sources) {
     const key = JSON.stringify(source);
@@ -66,7 +69,7 @@ export class QueryResultFactory {
         reasons: confidenceReasons,
       },
       provenance: {
-        sources: normalizeProvenance(nodes, input.provenanceSources),
+        sources: normalizeProvenance(nodes, input.provenanceSources, edges),
       },
       warnings,
       codes,

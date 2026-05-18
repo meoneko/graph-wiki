@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { AdapterContext, GraphEdge, GraphNode, NormalizedFact } from '../../core/types.js';
 import { TypeScriptAdapter } from './TypeScriptAdapter.js';
-import { validateFacts } from '../stages/03_validate.js';
-import { buildCanonicalGraph } from '../stages/04a_build_canonical.js';
+import { validateFacts } from '../stages/04_validate.js';
+import { buildCanonicalGraph } from '../stages/05a_build_canonical.js';
 
 const fixturePath = fileURLToPath(new URL('../../scanner/languages/typescript/__fixtures__/component.tsx', import.meta.url));
 

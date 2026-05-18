@@ -105,8 +105,8 @@ export class TrustAwareTraversal {
     }
 
     private reconstructPath(nodeIds: string[], edgeIds: string[], mode: QueryMode, codes: string[], warnings: string[]): ReasoningPath {
-        const nodes = nodeIds.map(id => this.artifacts.index.nodeById[id]!);
-        const edges = edgeIds.map(id => this.artifacts.index.edgeById[id]!);
+        const nodes = nodeIds.map(id => this.artifacts.index.nodeById[id]).filter((n): n is NonNullable<typeof n> => n !== undefined);
+        const edges = edgeIds.map(id => this.artifacts.index.edgeById[id]).filter((e): e is NonNullable<typeof e> => e !== undefined);
 
         // Determine overall trust level of the path
         const confidenceBands = new Set([...nodes.map(n => n.confidence_band), ...edges.map(e => e.confidence_band)]);

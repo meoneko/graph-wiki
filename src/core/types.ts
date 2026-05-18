@@ -1,16 +1,15 @@
-﻿export type NodeType = string;
+﻿import type { DecisionStatus as _DecisionStatus } from './errors.js';
+export { DecisionStatus, RuntimeCode, PipelineError } from './errors.js';
+export type { DecisionStatus as DecisionStatusType, RuntimeCode as RuntimeCodeType, PipelineError as PipelineErrorType } from './errors.js';
+
+// Local alias for use within this file
+type DecisionStatus = _DecisionStatus;
+
+export type NodeType = string;
 
 export type GraphKind = 'canonical' | 'derived' | 'exploratory' | 'external';
 
 export type ConfidenceBand = 'AUTHORITATIVE' | 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
-
-export type DecisionStatus =
-  | 'OK'
-  | 'AMBIGUOUS'
-  | 'INSUFFICIENT_EVIDENCE'
-  | 'EXPLORATORY_ONLY'
-  | 'PARTIAL'
-  | 'POLICY_VIOLATION';
 
 export type OperationType =
   | 'ask'
@@ -36,35 +35,64 @@ export interface Provenance {
   line_start?: number;
   line_end?: number;
   rule?: string;
+  /** Workspace that owns this fact */
+  workspaceId?: string;
+  /** Source root (project) within the workspace */
+  sourceRootId?: string;
+  /** Canonical file path (alias for file, always populated when file is) */
+  filePath?: string;
+  /** Pipeline stage that produced this provenance (alias for producer_stage) */
+  extractionStage?: string;
+  /** Method used for extraction: ast, static-analysis, regex, doc-parse, manual */
+  extractionMethod?: string;
+  /** Identifier of the adapter that produced this fact */
+  adapterId?: string;
+  /** Version of the adapter that produced this fact */
+  adapterVersion?: string;
+  /** Confidence score 0-1 for this fact */
+  confidence?: number;
+  /** Content hash for change detection */
+  hash?: string;
 }
 
 export const EdgeType = {
-  // Structural / control flow
-  calls: 'calls',
+  // Structural
+  contains: 'contains',
   imports: 'imports',
   inherits: 'inherits',
   implements: 'implements',
+  // Runtime
+  calls: 'calls',
   invokes: 'invokes',
   dispatches_to: 'dispatches_to',
   triggers: 'triggers',
-  precedes: 'precedes',
-  delegates_to: 'delegates_to',
-  contains: 'contains',
+  // Entry and flow
   entry_of: 'entry_of',
+  precedes: 'precedes',
   belongs_to_flow: 'belongs_to_flow',
-  // Data / contract
+  // Contract
   requests: 'requests',
   returns: 'returns',
   maps_to: 'maps_to',
   binds_to: 'binds_to',
-  configures: 'configures',
-  defines_schema: 'defines_schema',
-  documents: 'documents',
-  deploys: 'deploys',
   // Authority
   uses_authority: 'uses_authority',
   node_uses_authority: 'node_uses_authority',
   depends_on_authority: 'depends_on_authority',
+  // Data flow
+  reads: 'reads',
+  writes: 'writes',
+  transforms: 'transforms',
+  // Exploratory
+  likely_calls: 'likely_calls',
+  semantic_match: 'semantic_match',
+  inferred_contract: 'inferred_contract',
+  // Additional structural/operational
+  delegates_to: 'delegates_to',
+  configures: 'configures',
+  defines_schema: 'defines_schema',
+  documents: 'documents',
+  deploys: 'deploys',
   // Layer-specific build artifacts
   canonical_dependency: 'canonical_dependency',
   derived_dependency: 'derived_dependency',
@@ -146,6 +174,8 @@ export interface RejectedRecord {
 
 export interface GraphNode {
   id: string;
+  /** Required for canonical/derived; null for exploratory/external. Used by DriftDetector for cross-build comparison. */
+  stableKey: string | null;
   workspace: string;
   project: string;
   type: NodeType;
@@ -171,6 +201,8 @@ export interface GraphNode {
 
 export interface GraphEdge {
   id: string;
+  /** Required for canonical/derived; null for exploratory/external. Used by DriftDetector for cross-build comparison. */
+  stableKey: string | null;
   workspace: string;
   from_id: string;
   to_id: string;

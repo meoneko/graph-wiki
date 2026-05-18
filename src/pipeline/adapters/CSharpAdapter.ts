@@ -5,20 +5,59 @@ import type { ParsedSymbol } from '../../scanner/core/ILanguageParser.js';
 import { CSharpParser } from '../../scanner/languages/csharp/CSharpParser.js';
 import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
 import { readFile } from 'node:fs/promises';
+import { createExtractionError, type AdapterExtractionError } from './IProjectAdapter.js';
+
+/** Adapter identity constants for provenance tracking */
+const ADAPTER_ID = 'csharp-adapter';
+const ADAPTER_VERSION = '1.0.0';
 
 function stableId(...parts: string[]): string {
   return createHash('sha1').update(parts.join('|')).digest('hex');
 }
 
+/**
+ * CSharpAdapter — Extracts facts from C# source files.
+ *
+ * Emits findings and evidence only — does NOT assign trust semantics.
+ * Implements structured error handling (EXTRACTION_FAILED) with continue-on-error.
+ *
+ * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+ */
 export class CSharpAdapter implements IProjectAdapter {
   private readonly parser = new CSharpParser();
 
+  /** Collected extraction errors for the current extraction run */
+  private extractionErrors: AdapterExtractionError[] = [];
+
+  /** Returns errors from the last extraction run */
+  getExtractionErrors(): AdapterExtractionError[] {
+    return [...this.extractionErrors];
+  }
+
   async parse(paths: string[]): Promise<{ paths: string[]; files: Array<{ filePath: string; symbols: ParsedSymbol[] }> }> {
-    const files = await Promise.all(paths.map(async (p) => {
-      const source = await readFile(p, 'utf-8');
-      const parsed = await this.parser.parse(source, p);
-      return { filePath: p, symbols: parsed.symbols };
-    }));
+    this.extractionErrors = [];
+    const files: Array<{ filePath: string; symbols: ParsedSymbol[] }> = [];
+
+    for (const p of paths) {
+      try {
+        const source = await readFile(p, 'utf-8');
+        const parsed = await this.parser.parse(source, p);
+        files.push({ filePath: p, symbols: parsed.symbols });
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            p,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
+      }
+    }
+
     return { paths, files };
   }
 
@@ -27,9 +66,23 @@ export class CSharpAdapter implements IProjectAdapter {
     const out: CandidateRecord[] = [];
 
     for (const file of input.files) {
-      for (const symbol of file.symbols) {
-        const candidate = this.symbolToCandidate(symbol, file.filePath, context);
-        if (nodeTypeRegistry.has(candidate.candidate_type)) out.push(candidate);
+      try {
+        for (const symbol of file.symbols) {
+          const candidate = this.symbolToCandidate(symbol, file.filePath, context);
+          if (nodeTypeRegistry.has(candidate.candidate_type)) out.push(candidate);
+        }
+      } catch (err) {
+        // Structured error handling: emit EXTRACTION_FAILED and continue
+        this.extractionErrors.push(
+          createExtractionError(
+            file.filePath,
+            err instanceof Error ? err.message : String(err),
+            ADAPTER_ID,
+            ADAPTER_VERSION,
+            err,
+          ),
+        );
+        // Continue processing remaining files
       }
     }
 
@@ -41,6 +94,7 @@ export class CSharpAdapter implements IProjectAdapter {
   }
 
   async classify(candidates: CandidateRecord[]): Promise<CandidateRecord[]> {
+    // Adapters do NOT assign trust semantics — emit findings and evidence only
     return candidates;
   }
 
@@ -81,6 +135,12 @@ export class CSharpAdapter implements IProjectAdapter {
         namespace: symbol.namespace,
         containingClass: symbol.containingClass,
         semantic_role: this.inferSemanticRole(symbol),
+        // Full provenance fields
+        extraction_method: 'ast' as const,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence: 0.95,
+        record_type: 'node' as const,
       },
     };
   }
@@ -123,4 +183,3 @@ export class CSharpAdapter implements IProjectAdapter {
     return fromName?.[2] ?? undefined;
   }
 }
-

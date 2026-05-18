@@ -14,14 +14,19 @@ CREATE TABLE IF NOT EXISTS nodes (
   type        TEXT NOT NULL,
   graph_kind  TEXT NOT NULL DEFAULT 'canonical',
   confidence  TEXT NOT NULL DEFAULT 'EXTRACTED',
+  confidence_score REAL,
+  stable_key  TEXT,
   source_file TEXT,
   symbol      TEXT,
   http_method TEXT,
   http_path   TEXT,
   domain      TEXT,
   lang_meta   TEXT,
+  metadata    TEXT,
+  trust_level TEXT,
   provenance  TEXT NOT NULL,
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_workspace ON nodes(workspace);
 CREATE INDEX IF NOT EXISTS idx_nodes_type      ON nodes(type);
@@ -35,9 +40,13 @@ CREATE TABLE IF NOT EXISTS edges (
   type        TEXT NOT NULL,
   graph_kind  TEXT NOT NULL DEFAULT 'canonical',
   confidence  TEXT NOT NULL DEFAULT 'EXTRACTED',
+  confidence_score REAL,
+  stable_key  TEXT,
+  trust_level TEXT,
   metadata    TEXT,
   provenance  TEXT NOT NULL,
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_edges_from      ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to        ON edges(to_id);

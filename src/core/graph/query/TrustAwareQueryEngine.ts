@@ -6,7 +6,7 @@ import type {
     ReasoningPath,
     OperationType
 } from '../../types.js';
-import { GraphArtifactLoader, GraphValidationError, type LoadedGraphArtifacts } from './GraphArtifactLoader.js';
+import { GraphArtifactLoader, GraphValidationError, WorkspaceBoundaryViolationError, type LoadedGraphArtifacts } from './GraphArtifactLoader.js';
 import { TrustAwareTraversal } from '../traversal/TrustAwareTraversal.js';
 import { PathSelector } from '../traversal/pathSelector.js';
 import { EdgePolicyTable } from '../traversal/EdgePolicyTable.js';
@@ -18,6 +18,35 @@ export class TrustAwareQueryEngine {
     private readonly emitter = TrustEventEmitter.getInstance();
 
     constructor(private readonly workspaceId: string, private readonly loader: GraphArtifactLoader) { }
+
+    /**
+     * Validates that a node belongs to this engine's workspace.
+     * Returns true if the node is within workspace boundaries.
+     */
+    private validateWorkspaceBoundary(nodeId: string, artifacts: LoadedGraphArtifacts): boolean {
+        const node = artifacts.index.nodeById[nodeId];
+        if (!node) return true; // Node not found is handled elsewhere
+        return node.workspace === this.workspaceId;
+    }
+
+    private workspaceBoundaryViolationResult(nodeId: string, operation: OperationType, mode: QueryMode): QueryResult {
+        return QueryResultFactory.create({
+            status: 'POLICY_VIOLATION',
+            reasons: ['WORKSPACE_BOUNDARY_VIOLATION'],
+            warnings: ['WORKSPACE_BOUNDARY_VIOLATION'],
+            codes: ['POLICY_VIOLATION', 'WORKSPACE_BOUNDARY_VIOLATION'],
+            metadata: {
+                violatingNodeId: nodeId,
+                policy: {
+                    operation,
+                    mode,
+                    traversedEdgeCount: 0,
+                    blockedEdgeCount: 0,
+                    blockedCodes: ['WORKSPACE_BOUNDARY_VIOLATION'],
+                },
+            },
+        });
+    }
 
     /**
      * The primary trust-aware entrypoint for finding reasoning paths between nodes.
@@ -35,11 +64,14 @@ export class TrustAwareQueryEngine {
             });
         }
         this.emitter.emitTrustEvent({
-            workspaceId: this.workspaceId,
             timestamp: new Date().toISOString(),
+            workspace_id: this.workspaceId,
+            operation,
             mode,
-            type: 'TRUST_REASONING_START',
-            message: `Starting trust-aware reasoning (${operation}) from ${fromId} to ${toId}`,
+            status: 'OK',
+            codes: [],
+            warnings: [],
+            selected_path_count: 0,
         });
 
         let artifacts: LoadedGraphArtifacts;
@@ -48,6 +80,15 @@ export class TrustAwareQueryEngine {
         } catch (error) {
             return this.validationFailureResult(error, operation, mode);
         }
+
+        // Workspace boundary check for both source and target nodes
+        if (!this.validateWorkspaceBoundary(fromId, artifacts)) {
+            return this.workspaceBoundaryViolationResult(fromId, operation, mode);
+        }
+        if (!this.validateWorkspaceBoundary(toId, artifacts)) {
+            return this.workspaceBoundaryViolationResult(toId, operation, mode);
+        }
+
         const traversal = new TrustAwareTraversal(artifacts);
         const trace = new ReasoningTrace(this.workspaceId, mode);
 
@@ -59,23 +100,18 @@ export class TrustAwareQueryEngine {
 
         allPaths.forEach(p => {
             trace.logDiscovered(p);
-            this.emitter.emitTrustEvent({
-                workspaceId: this.workspaceId,
-                timestamp: new Date().toISOString(),
-                mode,
-                type: 'PATH_DISCOVERED',
-                message: `Discovered path with trust: ${p.trust_level}`,
-                meta: { pathId: p.path_id, trust: p.trust_level },
-            });
         });
 
         if (allPaths.length === 0) {
             this.emitter.emitTrustEvent({
-                workspaceId: this.workspaceId,
                 timestamp: new Date().toISOString(),
+                workspace_id: this.workspaceId,
+                operation,
                 mode,
-                type: 'TRUST_REASONING_FAILURE',
-                message: 'No valid paths found under current trust policy',
+                status: operation === 'governance' ? 'POLICY_VIOLATION' : 'INSUFFICIENT_EVIDENCE',
+                codes: [...allCodes],
+                warnings: ['NO_VALID_PATHS_UNDER_CURRENT_TRUST_POLICY'],
+                selected_path_count: 0,
             });
             if (operation === 'governance') {
                 allCodes.add('AUTHORITY_CHAIN_BROKEN');
@@ -107,21 +143,23 @@ export class TrustAwareQueryEngine {
             return this.emptyResult('AMBIGUOUS', ['CONFLICTING_PATHS_WITHOUT_CLEAR_AUTHORITY'], trace, { operation, mode });
         }
 
-        this.emitter.emitTrustEvent({
-            workspaceId: this.workspaceId,
-            timestamp: new Date().toISOString(),
-            mode,
-            type: 'TRUST_REASONING_SUCCESS',
-            message: `Reasoning successful. Best path trust: ${bestPath.trust_level}`,
-            meta: { trust: bestPath.trust_level },
-        });
-
         // 3. Construct Final Result
         const warnings = mode === 'authoritative' && bestPath.trust_level !== 'AUTHORITATIVE' ? ['RESULT_BELOW_REQUESTED_TRUST_LEVEL'] : [];
         if (bestPath.status === 'PARTIAL') {
             warnings.push('EXPLORATORY_USED');
             allCodes.add('EXPLORATORY_USED');
         }
+
+        this.emitter.emitTrustEvent({
+            timestamp: new Date().toISOString(),
+            workspace_id: this.workspaceId,
+            operation,
+            mode,
+            status: bestPath.status,
+            codes: [...allCodes],
+            warnings,
+            selected_path_count: 1,
+        });
 
         return QueryResultFactory.create({
             status: bestPath.status,
@@ -147,15 +185,24 @@ export class TrustAwareQueryEngine {
                     blockedCodes: [...new Set(deniedEdges.flatMap((d) => d.codes))],
                 },
             },
-            provenanceSources: bestPath.nodes.map((node) => node.provenance),
+            provenanceSources: [
+                ...bestPath.nodes.map((node) => node.provenance),
+                ...bestPath.edges.map((edge) => edge.provenance),
+            ],
         });
     }
 
     /**
      * Impact analysis with trust pruning.
      */
-    private async collectImpactGraph(nodeId: string, operation: OperationType, mode: QueryMode, depth = 3): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean; codes: string[]; warnings: string[]; blockedEdgeCount: number; blockedCodes: string[] }> {
+    private async collectImpactGraph(nodeId: string, operation: OperationType, mode: QueryMode, depth = 3): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean; codes: string[]; warnings: string[]; blockedEdgeCount: number; blockedCodes: string[]; workspaceBoundaryViolation?: string }> {
         const artifacts = await this.loader.load(this.workspaceId);
+
+        // Workspace boundary check for the root node
+        if (!this.validateWorkspaceBoundary(nodeId, artifacts)) {
+            return { nodes: [], edges: [], truncated: false, codes: ['WORKSPACE_BOUNDARY_VIOLATION'], warnings: ['WORKSPACE_BOUNDARY_VIOLATION'], blockedEdgeCount: 0, blockedCodes: [], workspaceBoundaryViolation: nodeId };
+        }
+
         const nodes = new Map<string, GraphNode>();
         const edges = new Map<string, GraphEdge>();
         const queue: Array<{ id: string; d: number; exploratoryHops: number }> = [{ id: nodeId, d: 0, exploratoryHops: 0 }];
@@ -224,6 +271,9 @@ export class TrustAwareQueryEngine {
         } catch (error) {
             return this.validationFailureResult(error, operation, mode);
         }
+        if (impact.workspaceBoundaryViolation) {
+            return this.workspaceBoundaryViolationResult(impact.workspaceBoundaryViolation, operation, mode);
+        }
         if (impact.nodes.length === 0) {
             return this.emptyResult('INSUFFICIENT_EVIDENCE', ['NODE_NOT_FOUND_OR_NO_TRAVERSABLE_IMPACT'], undefined, { operation, mode });
         }
@@ -247,6 +297,12 @@ export class TrustAwareQueryEngine {
         } catch (error) {
             return this.validationFailureResult(error, operation, mode);
         }
+
+        // Workspace boundary check
+        if (!this.validateWorkspaceBoundary(nodeId, artifacts)) {
+            return this.workspaceBoundaryViolationResult(nodeId, operation, mode);
+        }
+
         const node = artifacts.index.nodeById[nodeId];
         if (!node || !EdgePolicyTable.isNodeVisible(node, { operation, mode })) {
             return this.emptyResult('INSUFFICIENT_EVIDENCE', ['NODE_NOT_FOUND_OR_INACCESSIBLE_UNDER_POLICY'], undefined, { operation, mode });
@@ -276,6 +332,9 @@ export class TrustAwareQueryEngine {
         } catch (error) {
             return this.validationFailureResult(error, operation, mode);
         }
+        if (impact.workspaceBoundaryViolation) {
+            return this.workspaceBoundaryViolationResult(impact.workspaceBoundaryViolation, operation, mode);
+        }
         return this.graphResult(
             impact.nodes,
             impact.edges,
@@ -296,6 +355,15 @@ export class TrustAwareQueryEngine {
         } catch (error) {
             return this.validationFailureResult(error, operation, mode);
         }
+
+        // Workspace boundary check: verify all requested nodes belong to this workspace
+        const artifacts = await this.loader.load(this.workspaceId);
+        for (const nodeId of nodeIds) {
+            if (!this.validateWorkspaceBoundary(nodeId, artifacts)) {
+                return this.workspaceBoundaryViolationResult(nodeId, operation, mode);
+            }
+        }
+
         const touchedNodes = graph.nodes.filter((node) => nodeIds.includes(node.id));
         const touchingEdges = graph.edges.filter((edge) => nodeIds.includes(edge.from_id) || nodeIds.includes(edge.to_id));
         const trustPenalty = touchedNodes.reduce((sum, node) => sum + (node.trust_level === 'AUTHORITATIVE' ? 10 : node.trust_level === 'DERIVED' ? 5 : 2), 0);
@@ -533,11 +601,34 @@ export class TrustAwareQueryEngine {
             confidenceLevel: usesNonAuthoritative ? 'MEDIUM' : 'HIGH',
             confidenceReasons: reasons,
             metadata: { ...(metadata ?? {}), policy },
-            provenanceSources: nodes.map((node) => node.provenance),
+            provenanceSources: [
+                ...nodes.map((node) => node.provenance),
+                ...edges.map((edge) => edge.provenance),
+            ],
         });
     }
 
     private validationFailureResult(error: unknown, operation: OperationType, mode: QueryMode): QueryResult {
+        if (error instanceof WorkspaceBoundaryViolationError) {
+            return QueryResultFactory.create({
+                status: 'POLICY_VIOLATION',
+                reasons: ['WORKSPACE_BOUNDARY_VIOLATION'],
+                warnings: ['WORKSPACE_BOUNDARY_VIOLATION'],
+                codes: ['POLICY_VIOLATION', 'WORKSPACE_BOUNDARY_VIOLATION'],
+                metadata: {
+                    violatingIds: error.violatingIds,
+                    requestedWorkspace: error.requestedWorkspace,
+                    policy: {
+                        operation,
+                        mode,
+                        traversedEdgeCount: 0,
+                        blockedEdgeCount: 0,
+                        blockedCodes: ['WORKSPACE_BOUNDARY_VIOLATION'],
+                    },
+                },
+            });
+        }
+
         if (error instanceof GraphValidationError) {
             const codes = [...new Set(['POLICY_VIOLATION', ...error.codes])];
             return QueryResultFactory.create({

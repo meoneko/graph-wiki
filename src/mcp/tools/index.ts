@@ -6,6 +6,7 @@ import { registerGraphTools } from './graph.js';
 import { registerWikiTools } from './wiki.js';
 import { registerRefactorTools } from './refactor.js';
 import { registerFlowTools } from './flows.js';
+import { registerArchitectureTools } from './architecture.js';
 
 export function registerAllTools(): void {
   registerBuildTools();
@@ -16,4 +17,5 @@ export function registerAllTools(): void {
   registerWikiTools();
   registerFlowTools();
   registerRefactorTools();
+  registerArchitectureTools();
 }

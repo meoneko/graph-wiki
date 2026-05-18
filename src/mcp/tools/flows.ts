@@ -4,9 +4,12 @@ import { resolveDbPath } from '../../pipeline/config.js';
 import { computeFlows, minimalContext, withDerivedDomains } from '../../core/flows.js';
 import { registerTool } from './runtime.js';
 import { detectCommunities } from '../../core/graph/analysis/community.js';
-import type { GraphEdge, GraphNode } from '../../core/types.js';
+import type { GraphEdge, GraphNode, QueryMode } from '../../core/types.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
+import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
 import { insufficientEvidence, okResult } from './results.js';
+
+const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
 
 function projectNodes(nodes: GraphNode[], projectId?: string): GraphNode[] {
   return projectId ? nodes.filter((node) => node.project === projectId) : nodes;
@@ -111,15 +114,16 @@ function traceLane(
   };
 }
 
-async function visibleGraph(workspaceId: string, projectId?: string): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+async function visibleGraph(workspaceId: string, caller: 'mcp.flows.list_flows' | 'mcp.flows.get_flow' | 'mcp.flows.get_affected_flows' | 'mcp.flows.get_minimal_context' | 'mcp.flows.get_lineage', mode: QueryMode = 'mixed_safe', projectId?: string): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
   const service = getTrustedQueryService(getDB(resolveDbPath()));
-  const graph = await service.engine(workspaceId).getVisibleGraph('wiki', 'mixed_safe');
+  const operation = OperationResolver.resolve({ caller });
+  const graph = await service.engine(workspaceId).getVisibleGraph(operation, mode);
   const nodes = projectNodes(withDerivedDomains(graph.nodes), projectId).filter((node) => node.graph_kind !== 'exploratory');
   return { nodes, edges: projectEdges(graph.edges.filter((edge) => edge.graph_kind !== 'exploratory'), nodes) };
 }
 
-async function graphState(workspaceId: string, projectId?: string): Promise<Record<string, unknown>> {
-  const { nodes, edges } = await visibleGraph(workspaceId, projectId);
+async function graphState(workspaceId: string, mode: QueryMode = 'mixed_safe', projectId?: string): Promise<Record<string, unknown>> {
+  const { nodes, edges } = await visibleGraph(workspaceId, 'mcp.flows.get_minimal_context', mode, projectId);
   const flows = computeFlows(nodes, edges);
   const communities = detectCommunities(nodes, edges);
   const entrypoints = nodes.filter((node) => node.metadata?.is_entrypoint === true || node.metadata?.entrypoint_class || node.type.includes('endpoint') || node.type.includes('controller'));
@@ -160,6 +164,7 @@ export function registerFlowTools(): void {
         workspaceId: { type: 'string' },
         projectId: { type: 'string' },
         limit: { type: 'number' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId'],
     },
@@ -168,10 +173,9 @@ export function registerFlowTools(): void {
         workspaceId: z.string(),
         projectId: z.string().optional(),
         limit: z.number().int().positive().optional(),
+        mode: QueryModeSchema,
       }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = projectNodes(withDerivedDomains(db.getAllNodesByWorkspace(input.workspaceId)), input.projectId);
-      const edges = projectEdges(db.getEdgesByWorkspace(input.workspaceId), nodes);
+      const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.list_flows', input.mode as QueryMode, input.projectId);
       const flows = computeFlows(nodes, edges).slice(0, input.limit ?? 50);
       return okResult({ flows }, ['computed flows from graph data']);
     },
@@ -185,34 +189,21 @@ export function registerFlowTools(): void {
       properties: {
         workspaceId: { type: 'string' },
         flowId: { type: 'string' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId', 'flowId'],
     },
     handler: async (args) => {
-      const input = z.object({ workspaceId: z.string(), flowId: z.string() }).parse(args);
-      const db = getDB(resolveDbPath());
-      const nodes = withDerivedDomains(db.getAllNodesByWorkspace(input.workspaceId));
-      const edges = db.getEdgesByWorkspace(input.workspaceId);
+      const input = z.object({ workspaceId: z.string(), flowId: z.string(), mode: QueryModeSchema }).parse(args);
+      const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.get_flow', input.mode as QueryMode);
       const flow = computeFlows(nodes, edges).find((f) => f.id === input.flowId || f.domain === input.flowId);
       if (!flow) {
-        return {
-          ...okResult({ flow: null, nodes: [], edges: [] }, ['flow not found']),
-          status: 'INSUFFICIENT_EVIDENCE',
-          codes: ['FLOW_NOT_FOUND'],
-          flow: null,
-          nodes: [],
-          edges: [],
-        };
+        return insufficientEvidence({ flow: null, nodes: [], edges: [] }, ['flow not found'], ['FLOW_NOT_FOUND']);
       }
       const ids = new Set(flow.nodeIds);
       const flowNodes = nodes.filter((node) => ids.has(node.id));
       const flowEdges = edges.filter((edge) => ids.has(edge.from_id) || ids.has(edge.to_id));
-      return {
-        ...okResult({ flow, nodes: flowNodes, edges: flowEdges }, ['loaded flow graph']),
-        flow,
-        nodes: flowNodes,
-        edges: flowEdges,
-      };
+      return okResult({ flow, nodes: flowNodes, edges: flowEdges }, ['loaded flow graph']);
     },
   });
 
@@ -226,6 +217,7 @@ export function registerFlowTools(): void {
         projectId: { type: 'string' },
         targets: { type: 'array', items: { type: 'string' } },
         changedFiles: { type: 'array', items: { type: 'string' } },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId'],
     },
@@ -235,13 +227,14 @@ export function registerFlowTools(): void {
         projectId: z.string().optional(),
         targets: z.array(z.string()).optional(),
         changedFiles: z.array(z.string()).optional(),
+        mode: QueryModeSchema,
       }).parse(args);
       const targets = [...(input.targets ?? []), ...(input.changedFiles ?? [])].filter((target) => target.length > 0);
       if (targets.length === 0) {
         return insufficientEvidence({ flows: [], matchedNodes: [], unmatchedInputs: [] }, ['no targets provided'], ['NO_TARGETS']);
       }
 
-      const { nodes, edges } = await visibleGraph(input.workspaceId, input.projectId);
+      const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.get_affected_flows', input.mode as QueryMode, input.projectId);
       const matchedNodes = nodes.filter((node) => nodeMatchesTarget(node, targets));
       const matchedIds = new Set(matchedNodes.map((node) => node.id));
       const unmatchedInputs = targets.filter((target) => !matchedNodes.some((node) => nodeMatchesTarget(node, [target])));
@@ -286,6 +279,7 @@ export function registerFlowTools(): void {
         targets: { type: 'array', items: { type: 'string' } },
         depth: { type: 'number' },
         cap: { type: 'number' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId'],
     },
@@ -296,11 +290,12 @@ export function registerFlowTools(): void {
         targets: z.array(z.string()).optional(),
         depth: z.number().int().positive().default(2),
         cap: z.number().int().positive().default(50),
+        mode: QueryModeSchema,
       }).parse(args);
       if (!input.targets || input.targets.length === 0) {
-        return okResult(await graphState(input.workspaceId, input.projectId), ['loaded graph state summary']);
+        return okResult(await graphState(input.workspaceId, input.mode as QueryMode, input.projectId), ['loaded graph state summary']);
       }
-      const { nodes, edges } = await visibleGraph(input.workspaceId, input.projectId);
+      const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.get_minimal_context', input.mode as QueryMode, input.projectId);
       const context = minimalContext(nodes, edges, input.targets, input.depth, input.cap);
       return okResult({ ...context, context }, ['loaded minimal context for targets']);
     },
@@ -317,6 +312,7 @@ export function registerFlowTools(): void {
         direction: { type: 'string', enum: ['upstream', 'downstream', 'both'] },
         maxDepth: { type: 'number' },
         maxNodes: { type: 'number' },
+        mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId', 'nodeId'],
     },
@@ -327,8 +323,9 @@ export function registerFlowTools(): void {
         direction: z.enum(['upstream', 'downstream', 'both']).default('both'),
         maxDepth: z.number().int().positive().default(5),
         maxNodes: z.number().int().positive().default(100),
+        mode: QueryModeSchema,
       }).parse(args);
-      const { nodes, edges } = await visibleGraph(input.workspaceId);
+      const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.get_lineage', input.mode as QueryMode);
       const nodesById = new Map(nodes.map((node) => [node.id, node]));
       const target = nodesById.get(input.nodeId);
       if (!target) {

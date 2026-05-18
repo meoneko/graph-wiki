@@ -1,5 +1,6 @@
 import type { ConfidenceBand, GraphEdge, GraphNode, QueryMode, OperationType } from '../../types.js';
 import { EdgeType } from '../../types.js';
+import { resolveFlowType } from '../../taxonomy.js';
 
 export interface TrustPolicy {
     allowedConfidenceBands: ConfidenceBand[];
@@ -50,7 +51,11 @@ export class EdgePolicyTable {
         }
 
         if (mode === 'mixed_safe') {
-            return node.graph_kind === 'canonical' || node.graph_kind === 'derived';
+            // mixed_safe = canonical + derived + bounded exploratory (max 2 hops).
+            // The 2-hop bound is enforced at the EDGE traversal level (evaluateEdge),
+            // not at node visibility. Exploratory nodes are visible; traversal depth
+            // through exploratory edges is what's limited.
+            return node.graph_kind === 'canonical' || node.graph_kind === 'derived' || node.graph_kind === 'exploratory';
         }
 
         return true;
@@ -110,8 +115,8 @@ export class EdgePolicyTable {
                 break;
 
             case 'lineage':
-                // Authority-chain
-                const isLineageAllowed = ['calls', 'invokes', 'uses_authority', 'node_uses_authority', 'depends_on_authority'].includes(edge.type);
+                // Control flow + authority edges; rejects imports as lineage proof
+                const isLineageAllowed = ['calls', 'invokes', 'dispatches_to', 'triggers', 'uses_authority', 'node_uses_authority', 'depends_on_authority'].includes(edge.type);
                 if (!isLineageAllowed) {
                     return { allowed: false, codes: ['LINEAGE_REQUIRES_AUTHORITY_CHAIN'], warnings: [], reason: `Edge type ${edge.type} not suitable for lineage` };
                 }
@@ -146,6 +151,15 @@ export class EdgePolicyTable {
                 decision.codes.push('EXPLORATORY_USED');
             } else if (edge.confidence_band === 'AMBIGUOUS') {
                 return { allowed: false, codes: ['CONFIDENCE_BAND_NOT_ALLOWED'], warnings: [], reason: 'AMBIGUOUS confidence only allowed for exploratory edges in mixed_safe' };
+            }
+        }
+
+        // 5. Flow type inference — emit FLOW_TYPE_INFERRED when flow_type metadata is missing (Requirement 19.9)
+        const flowResult = resolveFlowType(edge);
+        if (flowResult.inferred) {
+            decision.warnings.push('FLOW_TYPE_INFERRED');
+            if (!decision.codes.includes('FLOW_TYPE_INFERRED')) {
+                decision.codes.push('FLOW_TYPE_INFERRED');
             }
         }
 

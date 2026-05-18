@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getDB } from '../../storage/GraphDB.js';
 import { loadConfig, resolveDbPath } from '../../pipeline/config.js';
-import { generateWiki } from '../../pipeline/stages/07_wiki.js';
+import { generateWiki } from '../../pipeline/stages/08_wiki.js';
 import { registerTool } from './runtime.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import type { QueryMode } from '../../core/types.js';

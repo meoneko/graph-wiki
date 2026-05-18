@@ -29,5 +29,9 @@ export function clearRegisteredToolsForTest(): void {
 export async function invokeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  return tool.handler(args);
+  const { enforceQueryResultContract } = await import('../../core/graph/query/QueryResultValidator.js');
+  const result = await tool.handler(args);
+  // Enforce QueryResult contract at the MCP boundary — raw graph data is never
+  // returned without status and provenance to reasoning consumers (Req 9.3)
+  return enforceQueryResultContract(result, { tool: name });
 }

@@ -56,6 +56,7 @@ export function registerReviewTools(): void {
         projectId: z.string().optional(),
         mode: QueryModeSchema,
       }).parse(args);
+      OperationResolver.resolve({ caller: 'mcp.review.detect_changes' });
       const parsed = await parseDiff(input.diff);
       const report = await buildImpactReport(parsed, input.workspaceId, input.mode as QueryMode);
       return toImpactResult(report, input.projectId);
@@ -80,6 +81,7 @@ export function registerReviewTools(): void {
         workspaceId: z.string(),
         mode: QueryModeSchema
       }).parse(args);
+      OperationResolver.resolve({ caller: 'mcp.review.review_diff' });
       const diff = await parseDiff(input.diffText);
       return toImpactResult(await buildImpactReport(diff, input.workspaceId, input.mode as QueryMode));
     },
@@ -107,6 +109,7 @@ export function registerReviewTools(): void {
         repoPath: z.string().optional(),
         mode: QueryModeSchema
       }).parse(args);
+      OperationResolver.resolve({ caller: 'mcp.review.review_pr' });
       const diff = await getDiff(input.repoPath ?? process.cwd(), input.base, input.head);
       return toImpactResult(await buildImpactReport(diff, input.workspaceId, input.mode as QueryMode));
     },
