@@ -21,6 +21,7 @@ export class TrustClassifier {
             e.includes('parser-static') ||
             e.includes('parser-verified') ||
             e === 'csharp_tree_sitter' ||
+            e === 'java_tree_sitter' ||
             e === 'ts_tree_sitter_parser' ||
             e === 'json_config_parser' ||
             e === 'yaml_config_parser' ||

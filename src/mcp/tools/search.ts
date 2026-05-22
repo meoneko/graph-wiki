@@ -29,6 +29,7 @@ export function registerSearchTools(): void {
         query: { type: 'string' },
         workspaceId: { type: 'string' },
         mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
+        semantic: { type: 'boolean', description: 'Enable hybrid FTS + embedding search' },
       },
       required: ['query', 'workspaceId'],
     },
@@ -36,13 +37,28 @@ export function registerSearchTools(): void {
       const input = z.object({
         query: z.string(),
         workspaceId: z.string(),
-        mode: QueryModeSchema
+        mode: QueryModeSchema,
+        semantic: z.boolean().optional().default(false),
       }).parse(args);
       // Validate caller registration through OperationResolver
       OperationResolver.resolve({ caller: 'mcp.search.search' });
       // Route through StructuredAskEngine with 'what-is-symbol' query type
       // for trust-aware search with full QueryResult semantics
       const askEngine = createAskEngine();
+
+      // When semantic is requested, use TrustAwareQueryEngine directly with search options
+      if (input.semantic) {
+        const service = getTrustedQueryService(getDB(resolveDbPath()));
+        const operation = OperationResolver.resolve({ caller: 'mcp.search.search' });
+        return service.engine(input.workspaceId).searchNodes(
+          input.query,
+          operation,
+          input.mode as QueryMode,
+          undefined,
+          { semantic: true },
+        );
+      }
+
       return askEngine.ask({
         question: input.query,
         workspace: input.workspaceId,

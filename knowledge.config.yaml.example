@@ -1,0 +1,162 @@
+# knowledge.config.yaml — Example configuration for code-review-graph
+#
+# Copy this file to knowledge.config.yaml and adjust values for your project.
+# For local overrides (API keys, paths), use knowledge.config.local.yaml (gitignored).
+
+workspaces:
+  - id: my-workspace
+    name: My Workspace
+    profile_mode: configured
+    projects:
+      - backend
+      - frontend
+    verification:
+      require_flows: true
+      required_golden_flows:
+        - Core User Flow
+      require_runtime_script_contract: true
+      require_artifact_parity: true
+      min_process_coverage: 0.2
+
+projects:
+  backend:
+    enabled: true
+    path: /path/to/backend
+    description: Backend service
+    sources:
+      include:
+        - src/**/*.cs
+        - src/**/*.csproj
+      exclude:
+        - "**/bin/**"
+        - "**/obj/**"
+    rules:
+      extract:
+        - overview
+        - concepts
+        - entities
+        - flows
+        - endpoints
+        - services
+      classify:
+        project_type: backend
+        stack:
+          - dotnet
+          - csharp
+
+  # Java/Spring project example (uncomment to enable)
+  # java-api:
+  #   enabled: true
+  #   path: /path/to/java-api
+  #   description: Java Spring Boot API service
+  #   sources:
+  #     include:
+  #       - src/**/*.java
+  #     exclude:
+  #       - "**/target/**"
+  #       - "**/build/**"
+  #       - "**/test/**"
+  #   rules:
+  #     extract:
+  #       - overview
+  #       - concepts
+  #       - entities
+  #       - flows
+  #       - endpoints
+  #       - services
+  #     classify:
+  #       project_type: backend
+  #       stack:
+  #         - java
+  #         - spring-boot
+
+  frontend:
+    enabled: true
+    path: /path/to/frontend
+    description: Frontend application
+    sources:
+      include:
+        - src/**/*.ts
+        - src/**/*.tsx
+      exclude:
+        - "**/node_modules/**"
+        - "**/dist/**"
+    rules:
+      extract:
+        - overview
+        - concepts
+        - entities
+        - pages
+        - routes
+        - services
+        - flows
+      classify:
+        project_type: frontend
+        stack:
+          - react
+          - typescript
+
+outputs:
+  source_root: ./knowledge/sources
+  state_root: ./knowledge/artifacts/internal/state
+  records_root: ./knowledge/artifacts/internal/records
+  wiki_root: ./knowledge/wiki
+  index_root: ./knowledge/artifacts/internal/index
+  reports_root: ./knowledge/reports
+
+ai:
+  provider: openrouter
+  model_extract: google/gemini-2.5-flash
+  model_build: google/gemini-2.5-flash
+  model_query: google/gemini-2.5-flash
+  api_key_env: OPENROUTER_API_KEY
+  max_chunk_chars: 8000
+  temperature: 0.1
+
+# MCP server configuration
+mcp:
+  tools:
+    # Allow only specific tools (empty = allow all)
+    allow: []
+    # Deny specific tools (applied after allow list)
+    deny: []
+    # Examples:
+    #   allow: [query_graph, search_nodes, get_flow]
+    #   deny: [build_knowledge_graph]
+
+# Evaluation runner configuration
+eval:
+  # Path to the default eval suite file (JSON or YAML)
+  suite: knowledge/eval/suite.json
+  # Pass threshold (0-1). Score must be >= threshold to pass.
+  pass_threshold: 0.9
+
+# Community detection configuration
+community:
+  # Maximum community size before splitting into sub-communities
+  max_size: 50
+
+# Search configuration
+search:
+  # Enable semantic (embedding-based) search by default
+  semantic: false
+  # Weight for semantic vs FTS fusion (0 = FTS only, 1 = semantic only)
+  semantic_weight: 0.5
+  # Maximum number of results to return
+  top_k: 25
+
+scheduler:
+  enabled: true
+  jobs:
+    - name: sync
+      command: knowledge:sync
+      cron: "0 */4 * * *"
+    - name: build
+      command: knowledge:run
+      cron: "15 */4 * * *"
+    - name: lint
+      command: quality:lint
+      cron: "0 2 * * *"
+    - name: digest
+      command: quality:digest
+      cron: "30 2 * * *"

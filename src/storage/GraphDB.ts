@@ -153,12 +153,40 @@ ALTER TABLE nodes ADD COLUMN confidence_score REAL;
 ALTER TABLE edges ADD COLUMN confidence_score REAL;
 `;
 
+const MIGRATION_0006 = `
+CREATE TABLE IF NOT EXISTS external_memory (
+  id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL,
+  workspace TEXT NOT NULL,
+  author TEXT NOT NULL,
+  annotation TEXT NOT NULL,
+  provenance_info TEXT NOT NULL,
+  confidence_band TEXT NOT NULL,
+  verification_signature TEXT,
+  ast_signature_hash TEXT,
+  last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS stale_annotations (
+  id TEXT PRIMARY KEY,
+  original_node_id TEXT NOT NULL,
+  workspace TEXT NOT NULL,
+  author TEXT NOT NULL,
+  annotation TEXT NOT NULL,
+  stale_reason TEXT NOT NULL,
+  archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_memory_node ON external_memory(node_id);
+`;
+
 const MIGRATIONS: Array<{ version: string; sql: string }> = [
   { version: '0001_init', sql: MIGRATION_0001 },
   { version: '0002_updated_at', sql: MIGRATION_0002 },
   { version: '0003_trust_level', sql: MIGRATION_0003 },
   { version: '0004_node_metadata', sql: MIGRATION_0004 },
   { version: '0005_stable_key_confidence_score', sql: MIGRATION_0005 },
+  { version: '0006_external_memory', sql: MIGRATION_0006 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -324,6 +352,20 @@ export class GraphDB {
     this.db.prepare('DELETE FROM edges WHERE workspace = ?').run(workspace);
   }
 
+  deleteNodesByType(workspace: string, type: string): void {
+    this.db.prepare('DELETE FROM nodes WHERE workspace = ? AND type = ?').run(workspace, type);
+  }
+
+  deleteEdgesByType(workspace: string, type: string): void {
+    this.db.prepare('DELETE FROM edges WHERE workspace = ? AND type = ?').run(workspace, type);
+  }
+
+  deleteEdgesByMetadataRule(workspace: string, type: string, derivationRule: string): void {
+    this.db.prepare(
+      `DELETE FROM edges WHERE workspace = ? AND type = ? AND json_extract(metadata, '$.derivation_rule') = ?`,
+    ).run(workspace, type, derivationRule);
+  }
+
   deleteDataForSourceFile(workspace: string, project: string, sourceFile: string): void {
     this.db.transaction(() => {
       this.db.prepare(`
@@ -377,6 +419,9 @@ export class GraphDB {
       for (const projectId of projectIds) {
         this.db.prepare('DELETE FROM file_hashes WHERE project = ?').run(projectId);
       }
+
+      // NOTE: external_memory and stale_annotations tables are INTENTIONALLY NOT cleared here.
+      // Human annotations and AI reflections (memories) are designed to persist across code rebuilds.
     })();
   }
 
@@ -464,6 +509,11 @@ export class GraphDB {
     return row ? { model: row.model, vector: bufferToVec(row.vector) } : undefined;
   }
 
+  getEmbeddingsByWorkspace(workspaceId: string): Array<{ nodeId: string; vector: Float32Array }> {
+    const rows = this.db.prepare('SELECT e.node_id, e.vector FROM embeddings e JOIN nodes n ON n.id = e.node_id WHERE n.workspace = ?').all(workspaceId) as Array<{ node_id: string; vector: Buffer }>;
+    return rows.map((r) => ({ nodeId: r.node_id, vector: bufferToVec(r.vector) }));
+  }
+
   findSimilarByVector(vector: Float32Array, workspace: string, topK: number): { nodeId: string; score: number }[] {
     const rows = this.db.prepare('SELECT e.node_id, e.vector FROM embeddings e JOIN nodes n ON n.id = e.node_id WHERE n.workspace = ?').all(workspace) as Array<{ node_id: string; vector: Buffer }>;
     return rows
@@ -478,11 +528,102 @@ export class GraphDB {
     return this.db.transaction(() => fn(this))();
   }
 
+  // ── External Memory & Stale Annotations (US-023) ──────────────────────────
 
+  upsertExternalMemory(item: ExternalMemoryRow): void {
+    this.db.prepare(`
+      INSERT INTO external_memory (
+        id, node_id, workspace, author, annotation, provenance_info, confidence_band, verification_signature, ast_signature_hash, last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        node_id = excluded.node_id,
+        workspace = excluded.workspace,
+        author = excluded.author,
+        annotation = excluded.annotation,
+        provenance_info = excluded.provenance_info,
+        confidence_band = excluded.confidence_band,
+        verification_signature = excluded.verification_signature,
+        ast_signature_hash = COALESCE(excluded.ast_signature_hash, ast_signature_hash),
+        last_updated = CURRENT_TIMESTAMP
+    `).run(
+      item.id,
+      item.node_id,
+      item.workspace,
+      item.author,
+      item.annotation,
+      item.provenance_info,
+      item.confidence_band,
+      item.verification_signature || null,
+      item.ast_signature_hash || null
+    );
+  }
+
+  getExternalMemoryByNode(nodeId: string): ExternalMemoryRow[] {
+    return this.db.prepare('SELECT * FROM external_memory WHERE node_id = ?').all(nodeId) as ExternalMemoryRow[];
+  }
+
+  getExternalMemoryByWorkspace(workspaceId: string): ExternalMemoryRow[] {
+    return this.db.prepare('SELECT * FROM external_memory WHERE workspace = ?').all(workspaceId) as ExternalMemoryRow[];
+  }
+
+  deleteExternalMemory(id: string): void {
+    this.db.prepare('DELETE FROM external_memory WHERE id = ?').run(id);
+  }
+
+  upsertStaleAnnotation(item: StaleAnnotationRow): void {
+    this.db.prepare(`
+      INSERT INTO stale_annotations (
+        id, original_node_id, workspace, author, annotation, stale_reason, archived_at
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        original_node_id = excluded.original_node_id,
+        workspace = excluded.workspace,
+        author = excluded.author,
+        annotation = excluded.annotation,
+        stale_reason = excluded.stale_reason,
+        archived_at = CURRENT_TIMESTAMP
+    `).run(
+      item.id,
+      item.original_node_id,
+      item.workspace,
+      item.author,
+      item.annotation,
+      item.stale_reason
+    );
+  }
+
+  getStaleAnnotations(workspaceId: string): StaleAnnotationRow[] {
+    return this.db.prepare('SELECT * FROM stale_annotations WHERE workspace = ?').all(workspaceId) as StaleAnnotationRow[];
+  }
 
   close(): void {
     this.db.close();
   }
+}
+
+// ── US-023 Row Types ─────────────────────────────────────────────────────────
+
+export interface ExternalMemoryRow {
+  id: string;
+  node_id: string;
+  workspace: string;
+  author: 'human' | 'agent';
+  annotation: string;
+  provenance_info: string; // JSON string representing Provenance
+  confidence_band: 'AUTHORITATIVE' | 'INFERRED';
+  verification_signature?: string;
+  ast_signature_hash?: string;
+  last_updated?: string;
+}
+
+export interface StaleAnnotationRow {
+  id: string;
+  original_node_id: string;
+  workspace: string;
+  author: 'human' | 'agent';
+  annotation: string;
+  stale_reason: 'node_deleted' | 'project_removed';
+  archived_at?: string;
 }
 
 // ── Singleton registry ─────────────────────────────────────────────────────────

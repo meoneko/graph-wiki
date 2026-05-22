@@ -13,11 +13,30 @@ import { EdgePolicyTable } from '../traversal/EdgePolicyTable.js';
 import { ReasoningTrace } from './ReasoningTrace.js';
 import { TrustEventEmitter } from '../../observability/TrustEventEmitter.js';
 import { QueryResultFactory } from './QueryResultFactory.js';
+import { HybridSearchEngine, type HybridSearchOptions, type EmbedQueryFn } from '../search/HybridSearchEngine.js';
+
+export interface SearchNodeOptions {
+    /** Enable semantic search. Default: false */
+    semantic?: boolean;
+    /** Semantic weight for fusion (0-1). Default: 0.5 */
+    weight?: number;
+    /** Max results. Default: 50 */
+    topK?: number;
+}
 
 export class TrustAwareQueryEngine {
     private readonly emitter = TrustEventEmitter.getInstance();
+    private hybridSearchEngine?: HybridSearchEngine;
 
     constructor(private readonly workspaceId: string, private readonly loader: GraphArtifactLoader) { }
+
+    /**
+     * Set the hybrid search engine for semantic search support.
+     * When set, searchNodes() can use semantic search when the `semantic` option is true.
+     */
+    setHybridSearchEngine(engine: HybridSearchEngine): void {
+        this.hybridSearchEngine = engine;
+    }
 
     /**
      * Validates that a node belongs to this engine's workspace.
@@ -445,8 +464,34 @@ export class TrustAwareQueryEngine {
         return this.graphResult(gaps, [], gaps.length > 0 ? 'PARTIAL' : 'OK', [`mode=${mode}`], gaps.length > 0 ? ['KNOWLEDGE_GAPS_FOUND'] : [], { gapNodeIds: gaps.map((node) => node.id) }, [], { operation, mode });
     }
 
-    async searchNodes(query: string, operation: OperationType, mode: QueryMode, limit = 50): Promise<QueryResult> {
+    async searchNodes(query: string, operation: OperationType, mode: QueryMode, limit?: number, searchOptions?: SearchNodeOptions): Promise<QueryResult> {
         if (!operation) return this.emptyResult('POLICY_VIOLATION', ['OPERATION_REQUIRED']);
+        const effectiveLimit = limit ?? searchOptions?.topK ?? 50;
+
+        // When semantic search is requested and a hybrid engine is available, use it
+        if (searchOptions?.semantic && this.hybridSearchEngine) {
+            let graph: { nodes: GraphNode[]; edges: GraphEdge[] };
+            try {
+                graph = await this.getVisibleGraph(operation, mode);
+            } catch (error) {
+                return this.validationFailureResult(error, operation, mode);
+            }
+            const visibleNodeIds = new Set(graph.nodes.map((n) => n.id));
+
+            const { results, warnings } = await this.hybridSearchEngine.search(query, this.workspaceId, {
+                semantic: true,
+                weight: searchOptions.weight,
+                topK: effectiveLimit,
+            });
+
+            // Filter results to only include nodes visible under current trust policy
+            const visibleResults = results.filter((r) => visibleNodeIds.has(r.node.id));
+            const matches = visibleResults.map((r) => r.node).slice(0, effectiveLimit);
+
+            return this.graphResult(matches, [], matches.length > 0 ? 'OK' : 'INSUFFICIENT_EVIDENCE', [`mode=${mode}`, 'hybrid search'], matches.length > 0 ? warnings : [...warnings, 'NO_MATCH'], { query, matchCount: matches.length, semantic: true }, [], { operation, mode });
+        }
+
+        // Default: in-memory string search (existing behavior, no overhead)
         let graph: { nodes: GraphNode[]; edges: GraphEdge[] };
         try {
             graph = await this.getVisibleGraph(operation, mode);
@@ -463,7 +508,7 @@ export class TrustAwareQueryEngine {
                 node.domain,
             ].some((value) => value?.toLowerCase().includes(normalized)))
             .sort((a, b) => a.id.localeCompare(b.id))
-            .slice(0, limit);
+            .slice(0, effectiveLimit);
         return this.graphResult(matches, [], matches.length > 0 ? 'OK' : 'INSUFFICIENT_EVIDENCE', [`mode=${mode}`, 'graph string search'], matches.length > 0 ? [] : ['NO_MATCH'], { query, matchCount: matches.length }, [], { operation, mode });
     }
 
@@ -591,7 +636,7 @@ export class TrustAwareQueryEngine {
             blockedCodes: policyCtx?.blockedCodes ?? [],
         };
 
-        return QueryResultFactory.create({
+        const result = QueryResultFactory.create({
             status,
             nodes,
             edges,
@@ -606,6 +651,8 @@ export class TrustAwareQueryEngine {
                 ...edges.map((edge) => edge.provenance),
             ],
         });
+
+        return this.attachAnnotations(result, policyCtx?.mode ?? 'authoritative');
     }
 
     private validationFailureResult(error: unknown, operation: OperationType, mode: QueryMode): QueryResult {
@@ -694,7 +741,7 @@ export class TrustAwareQueryEngine {
             blockedEdgeCount: 0,
             blockedCodes: [],
         };
-        return QueryResultFactory.create({
+        const result = QueryResultFactory.create({
             status,
             reasons: ['NO_EVIDENCE_FOUND'],
             warnings,
@@ -704,5 +751,39 @@ export class TrustAwareQueryEngine {
                 policy,
             },
         });
+
+        return this.attachAnnotations(result, policyCtx?.mode ?? 'authoritative');
+    }
+
+    private attachAnnotations(result: QueryResult, mode: QueryMode): QueryResult {
+        const db = this.loader.db;
+        if (!db) return result;
+
+        try {
+            const rawAnnotations = db.getExternalMemoryByWorkspace(this.workspaceId);
+            // In authoritative mode, only human annotations are allowed, agent annotations are hidden
+            const annotations = mode === 'authoritative'
+                ? rawAnnotations.filter(ann => ann.author === 'human')
+                : rawAnnotations;
+
+            // Also, update nodes metadata to contain their matching annotations!
+            if (result.data?.nodes) {
+                const nodeMap = new Map(annotations.map(a => [a.node_id, a]));
+                for (const node of result.data.nodes) {
+                    const ann = nodeMap.get(node.id) || nodeMap.get(node.id.replace(/^node:/, ''));
+                    if (ann) {
+                        if (!node.metadata) node.metadata = {};
+                        node.metadata.external_annotation = ann.annotation;
+                        node.metadata.external_annotation_author = ann.author;
+                        node.metadata.external_annotation_confidence = ann.confidence_band;
+                    }
+                }
+            }
+
+            return QueryResultFactory.withMetadata(result, { annotations });
+        } catch (error) {
+            console.error(`[ERROR] Failed to attach annotations to query result: ${error}`);
+            return result;
+        }
     }
 }

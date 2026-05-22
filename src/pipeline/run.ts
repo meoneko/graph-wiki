@@ -1,8 +1,9 @@
-﻿import { loadConfig, getWorkspace, getWorkspaceProjects, resolveDbPath, resolveOutputPath } from './config.js';
+import { loadConfig, getWorkspace, getWorkspaceProjects, resolveDbPath, resolveOutputPath } from './config.js';
 import { loadImportMap, type ImportMapArtifact } from './importMap.js';
 import { getDB } from '../storage/GraphDB.js';
 import { TrustEventEmitter, type TrustEvent } from '../core/observability/TrustEventEmitter.js';
 import { syncSources } from './stages/01_sync.js';
+import { reingestWikiAnnotations, reconcileAnnotations } from './stages/01b_reingest.js';
 import { extractCandidates } from './stages/02_extract.js';
 import { normalizeFacts } from './stages/03_normalize.js';
 import { validateFacts } from './stages/04_validate.js';
@@ -30,6 +31,7 @@ export interface RunOptions {
  */
 export const PIPELINE_STAGE_ORDER = [
   'sync',
+  'reingest',
   'extract',
   'normalize',
   'validate',
@@ -49,6 +51,7 @@ export type PipelineStage = (typeof PIPELINE_STAGE_ORDER)[number];
 // Exported stages for testing and extensibility
 export const PipelineStages = {
   syncSources,
+  reingestWikiAnnotations,
   extractCandidates,
   normalizeFacts,
   validateFacts,
@@ -147,6 +150,18 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
       PipelineError.WORKSPACE_CONFIG_INVALID,
     ]);
     throw new PipelineHaltError('sync', [PipelineError.WORKSPACE_CONFIG_INVALID], message);
+  }
+
+  // ── Stage 1b: Reingest ──────────────────────────────────────────────────────
+  emitStageEvent(emitter, workspaceId, 'reingest', DecisionStatus.OK);
+  try {
+    await PipelineStages.reingestWikiAnnotations(workspace, config, db);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emitStageEvent(emitter, workspaceId, 'reingest', DecisionStatus.POLICY_VIOLATION, [
+      PipelineError.WIKI_SOURCE_POLICY_VIOLATION,
+    ]);
+    throw new PipelineHaltError('reingest', [PipelineError.WIKI_SOURCE_POLICY_VIOLATION], message);
   }
 
   // ── Stage 2: Extract ───────────────────────────────────────────────────────
@@ -264,6 +279,13 @@ export async function runPipeline(workspaceId: string, _options: RunOptions = {}
   // incremental mode. After buildFlowGraph the DB is the canonical source of truth.
   const currentNodes = db.getAllNodesByWorkspace(workspace.id);
   const currentEdges = db.getEdgesByWorkspace(workspace.id);
+
+  // Post-Build Reconciliation Pass for annotations and AST signature drift detection
+  try {
+    await reconcileAnnotations(workspace.id, currentNodes, db, config);
+  } catch (err) {
+    console.error(`[ERROR] Annotation reconciliation failed: ${err}`);
+  }
 
   // ── Stage 6: Enrich ────────────────────────────────────────────────────────
   emitStageEvent(emitter, workspaceId, 'enrich', DecisionStatus.OK);

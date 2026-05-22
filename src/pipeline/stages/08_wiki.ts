@@ -1,4 +1,4 @@
-﻿import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { GraphNode, GraphEdge, Provenance, ConfidenceBand, GraphKind } from '../../core/types.js';
 import type { KnowledgeConfig } from '../config.js';
@@ -537,7 +537,7 @@ export async function generateWiki(
   workspaceId: string,
   nodes: GraphNode[],
   edges: GraphEdge[],
-  _db: GraphDB,
+  db: GraphDB,
   config: KnowledgeConfig,
 ): Promise<void> {
   const builder = new WikiBuilder();
@@ -546,9 +546,96 @@ export async function generateWiki(
   const root = path.join(resolveOutputPath(config, 'wiki_root'), workspaceId);
   await mkdir(root, { recursive: true });
 
-  // Write each page as a JSON file
+  // Load external annotations for this workspace
+  const externalAnnotations = db ? db.getExternalMemoryByWorkspace(workspaceId) : [];
+
+  // Write each page as a JSON file and a markdown (.md) file
   for (const page of pages) {
+    // 1. Write JSON file
     await writeFile(path.join(root, `${page.id}.json`), JSON.stringify(page, null, 2), 'utf-8');
+
+    // 2. Build Markdown content
+    const mdLines: string[] = [];
+    mdLines.push('---');
+    mdLines.push(`id: ${page.id}`);
+    mdLines.push(`title: ${page.title}`);
+    mdLines.push(`pageType: ${page.pageType}`);
+    mdLines.push(`status: ${page.status}`);
+    mdLines.push(`generatedAt: ${page.generatedAt || new Date().toISOString()}`);
+    mdLines.push('---');
+    mdLines.push('');
+    mdLines.push(page.content);
+    mdLines.push('');
+
+    // Append AI reflections wrapped in circular-ingestion-proof markers
+    mdLines.push('<!-- BEGIN GENERATED ANNOTATIONS -->');
+    mdLines.push('## System Generated Reflections');
+    mdLines.push('');
+    if (page.annotations && page.annotations.length > 0) {
+      for (const ann of page.annotations) {
+        mdLines.push(`- ${ann.content}`);
+      }
+    } else {
+      mdLines.push('_No system-generated reflections._');
+    }
+    mdLines.push('<!-- END GENERATED ANNOTATIONS -->');
+    mdLines.push('');
+
+    // Determine relevant nodes for this page to filter external annotations
+    const pageNodes = new Set<string>();
+    if (page.pageType === 'overview') {
+      for (const n of nodes) {
+        pageNodes.add(n.id);
+        if (n.symbol) pageNodes.add(n.symbol);
+      }
+    } else if (page.pageType === 'domain') {
+      const domainName = page.title.replace('Domain: ', '');
+      const domainNodes = nodes.filter(n => (n.domain || 'unknown') === domainName);
+      for (const n of domainNodes) {
+        pageNodes.add(n.id);
+        if (n.symbol) pageNodes.add(n.symbol);
+      }
+    } else if (page.pageType === 'module') {
+      const moduleName = page.title.replace('Module: ', '');
+      const moduleNodes = nodes.filter(n => (n.project || 'unknown') === moduleName);
+      for (const n of moduleNodes) {
+        pageNodes.add(n.id);
+        if (n.symbol) pageNodes.add(n.symbol);
+      }
+    } else if (page.pageType === 'entrypoints') {
+      const entrypointNodes = nodes.filter(n =>
+        n.type.includes('api') || n.type.includes('controller') || n.type.includes('entrypoint') || n.type.includes('route')
+      );
+      for (const n of entrypointNodes) {
+        pageNodes.add(n.id);
+        if (n.symbol) pageNodes.add(n.symbol);
+      }
+    }
+
+    // Filter external annotations for this page
+    const relevantExt = externalAnnotations.filter(ext => 
+      page.pageType === 'overview' || pageNodes.has(ext.node_id) || pageNodes.has(`node:${ext.node_id}`)
+    );
+
+    if (relevantExt.length > 0) {
+      mdLines.push('## External Annotations');
+      mdLines.push('');
+      for (const ext of relevantExt) {
+        mdLines.push('<!-- annotation');
+        mdLines.push(`node_id: ${ext.node_id}`);
+        mdLines.push(`author: ${ext.author}`);
+        if (ext.verification_signature) {
+          mdLines.push(`signature: ${ext.verification_signature}`);
+        }
+        mdLines.push('---');
+        mdLines.push(ext.annotation);
+        mdLines.push('-->');
+        mdLines.push(`- [EXTERNAL_ANNOTATION] (Author: ${ext.author}, Trust: ${ext.confidence_band}) **${ext.node_id}**: ${ext.annotation}`);
+        mdLines.push('');
+      }
+    }
+
+    await writeFile(path.join(root, `${page.id}.md`), mdLines.join('\n'), 'utf-8');
   }
 
   // Also write a README.md summary for human readability
@@ -559,7 +646,7 @@ export async function generateWiki(
     `Pages: ${pages.length}`,
     '',
     '## Pages',
-    ...pages.map((p) => `- [${p.title}](${p.id}.json) — status: ${p.status}`),
+    ...pages.map((p) => `- [${p.title}](${p.id}.md) — status: ${p.status}`),
   ];
   await writeFile(path.join(root, 'README.md'), readmeLines.join('\n'), 'utf-8');
 }

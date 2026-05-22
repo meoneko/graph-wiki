@@ -34,17 +34,17 @@ exposed via MCP tools and CLI following established patterns.
 
 | Story | Title | Status |
 |---|---|---|
-| US-001 | Core data models and types | planned |
-| US-002 | ModuleBoundaryAnalyzer | planned |
-| US-003 | CycleDetector | planned |
-| US-004 | LayerViolationDetector | planned |
-| US-005 | FlowAssessor | planned |
-| US-006 | DeadCodeClassifier | planned |
-| US-007 | ArchitectureReviewEngine orchestrator | planned |
-| US-008 | ArchitectureReportWriter | planned |
-| US-009 | MCP tool integration | planned |
-| US-010 | CLI command and OperationResolver wiring | planned |
-| US-011 | End-to-end integration | planned |
+| US-001 | Core data models and types | done |
+| US-002 | ModuleBoundaryAnalyzer | done |
+| US-003 | CycleDetector | done |
+| US-004 | LayerViolationDetector | done |
+| US-005 | FlowAssessor | done |
+| US-006 | DeadCodeClassifier | done |
+| US-007 | ArchitectureReviewEngine orchestrator | done |
+| US-008 | ArchitectureReportWriter | done |
+| US-009 | MCP tool integration | done |
+| US-010 | CLI command and OperationResolver wiring | done |
+| US-011 | End-to-end integration | done |
 
 ## Exit Criteria
 

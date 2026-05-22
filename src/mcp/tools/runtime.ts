@@ -19,6 +19,42 @@ export function getRegisteredTools(): McpToolDefinition[] {
   return [...tools];
 }
 
+/**
+ * Applies allow/deny filtering to the registered tool set in-place.
+ *
+ * Filter semantics (set algebra):
+ * - If `allow` is non-empty: keep only tools whose names are in `allow` (intersection with T).
+ * - Then remove any tools whose names are in `deny` (set difference).
+ * - If both `allow` and `deny` are empty/undefined: no-op (all tools remain).
+ *
+ * Resulting filtered set = (A ∩ T) \ D when A is non-empty, OR T \ D when A is empty.
+ */
+export function applyToolFilter(filter: { allow?: string[]; deny?: string[] }): void {
+  const { allow, deny } = filter;
+
+  // Step 1: Apply allow list (if non-empty, keep only listed tools)
+  if (allow && allow.length > 0) {
+    const allowSet = new Set(allow);
+    for (let i = tools.length - 1; i >= 0; i--) {
+      const tool = tools[i];
+      if (tool && !allowSet.has(tool.name)) {
+        tools.splice(i, 1);
+      }
+    }
+  }
+
+  // Step 2: Apply deny list (remove any tools in deny)
+  if (deny && deny.length > 0) {
+    const denySet = new Set(deny);
+    for (let i = tools.length - 1; i >= 0; i--) {
+      const tool = tools[i];
+      if (tool && denySet.has(tool.name)) {
+        tools.splice(i, 1);
+      }
+    }
+  }
+}
+
 export function clearRegisteredToolsForTest(): void {
   if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {
     throw new Error('clearRegisteredToolsForTest may only be used in tests.');

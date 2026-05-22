@@ -71,6 +71,283 @@ function addToMap<V>(map: Map<string, V[]>, key: string, value: V): void {
     }
 }
 
+// ── Partial Class Merge ─────────────────────────────────────────────────────
+
+export interface PartialClassMergeResult {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    warnings: string[];
+}
+
+/**
+ * Merges partial class fragments into virtual_class nodes in the derived layer.
+ *
+ * Algorithm:
+ * 1. Filter canonical nodes where type === 'csharp_class' and lang_meta?.isPartial === true
+ * 2. Group by project + label (class name)
+ * 3. For groups with ≥2 fragments: check first-level subdirectory ambiguity
+ * 4. If ambiguous (≥2 distinct dirs): emit PARTIAL_CLASS_NAMESPACE_AMBIGUOUS warning, skip
+ * 5. Otherwise: create virtual_class node + is_partial_of edges
+ */
+export function mergePartialClasses(
+    workspaceId: string,
+    db: GraphDB,
+): PartialClassMergeResult {
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    const warnings: string[] = [];
+
+    // Step 1: Filter partial class fragments
+    const allNodes = db.getAllNodesByWorkspace(workspaceId);
+    const fragments = allNodes.filter(
+        (n) => n.type === 'csharp_class' && n.lang_meta?.isPartial === true,
+    );
+
+    // Step 2: Group by project + label (class name)
+    const groups = new Map<string, GraphNode[]>();
+    for (const fragment of fragments) {
+        const key = `${fragment.project}|${fragment.label}`;
+        const existing = groups.get(key);
+        if (existing) {
+            existing.push(fragment);
+        } else {
+            groups.set(key, [fragment]);
+        }
+    }
+
+    const timestamp = new Date().toISOString();
+
+    for (const [_groupKey, groupFragments] of groups) {
+        // Step 3: Skip groups with fewer than 2 fragments
+        if (groupFragments.length < 2) continue;
+
+        const project = groupFragments[0]!.project;
+        const className = groupFragments[0]!.label;
+
+        // Step 4: Check first-level subdirectory ambiguity
+        const firstLevelDirs = new Set<string>();
+        for (const frag of groupFragments) {
+            if (frag.source_file) {
+                // Extract first-level subdirectory from source_file path
+                const normalized = frag.source_file.replace(/\\/g, '/');
+                const parts = normalized.split('/');
+                // First-level subdir is the first path segment (if file is in a subdir)
+                const firstDir = parts.length > 1 ? parts[0]! : '';
+                firstLevelDirs.add(firstDir);
+            }
+        }
+
+        if (firstLevelDirs.size >= 2) {
+            // Ambiguous: fragments in different first-level subdirectories
+            const dirs = [...firstLevelDirs].sort();
+            warnings.push(
+                `PARTIAL_CLASS_NAMESPACE_AMBIGUOUS: ${className} (project: ${project}, dirs: [${dirs.join(', ')}])`,
+            );
+            continue;
+        }
+
+        // Step 5: Resolve common namespace
+        const namespaces = new Set<string>();
+        for (const frag of groupFragments) {
+            if (frag.lang_meta?.namespace && typeof frag.lang_meta.namespace === 'string') {
+                namespaces.add(frag.lang_meta.namespace);
+            }
+        }
+        const commonNamespace = namespaces.size === 1 ? [...namespaces][0] : undefined;
+
+        // Sort fragments alphabetically by node id for mergedFrom
+        const sortedFragments = [...groupFragments].sort((a, b) => a.id.localeCompare(b.id));
+
+        // Step 6: Create virtual_class node
+        const virtualId = `virtual_class:${sid(workspaceId, project, className)}`;
+
+        const virtualNode: GraphNode = {
+            id: virtualId,
+            stableKey: virtualId,
+            type: 'virtual_class',
+            workspace: workspaceId,
+            project,
+            graph_kind: 'derived',
+            confidence_band: 'INFERRED',
+            trust_level: 'DERIVED',
+            label: className,
+            symbol: className,
+            source_file: undefined,
+            provenance: {
+                source: 'analysis',
+                artifact_source: 'cross-file-analysis',
+                producer_stage: 'buildDerivedGraph',
+                rule: 'partial-class-merge',
+                timestamp,
+            },
+            lang_meta: {
+                fragmentCount: groupFragments.length,
+                mergedFrom: sortedFragments.map((f) => f.id),
+                ...(commonNamespace !== undefined ? { namespace: commonNamespace } : {}),
+            },
+            updated_at: timestamp,
+        };
+
+        nodes.push(virtualNode);
+
+        // Step 7: Create is_partial_of edges from each fragment to the virtual_class
+        for (const fragment of groupFragments) {
+            const edgeId = `edge:${sid(fragment.id, virtualId, 'is_partial_of')}`;
+
+            const edge: GraphEdge = {
+                id: edgeId,
+                stableKey: edgeId,
+                workspace: workspaceId,
+                from_id: fragment.id,
+                to_id: virtualId,
+                type: 'is_partial_of',
+                graph_kind: 'derived',
+                confidence_band: 'INFERRED',
+                trust_level: 'DERIVED',
+                provenance: {
+                    source: 'analysis',
+                    artifact_source: 'cross-file-analysis',
+                    producer_stage: 'buildDerivedGraph',
+                    rule: 'partial-class-merge',
+                    timestamp,
+                },
+                metadata: {
+                    derivation_rule: 'partial-class-merge',
+                },
+                updated_at: timestamp,
+            };
+
+            edges.push(edge);
+        }
+    }
+
+    return { nodes, edges, warnings };
+}
+
+// ── Contains Edge Materialization ────────────────────────────────────────────
+
+export interface ContainsEdgeResult {
+    edges: GraphEdge[];
+    warnings: string[];
+}
+
+/**
+ * Materializes `contains` edges from class nodes to their method nodes.
+ *
+ * Resolution priority for the parent class node:
+ * 1. virtual_class node for that class name in same project
+ * 2. csharp_class fragment matching by source_file
+ * 3. Any csharp_class fragment with same label in same project
+ *
+ * If no match is found, a warning is emitted and edge creation is skipped.
+ * Exactly one contains edge is created per method node.
+ */
+export function materializeContainsEdges(
+    workspaceId: string,
+    db: GraphDB,
+): ContainsEdgeResult {
+    const edges: GraphEdge[] = [];
+    const warnings: string[] = [];
+
+    const timestamp = new Date().toISOString();
+
+    // Get ALL nodes in the workspace (both canonical and derived)
+    const allNodes = db.getAllNodesByWorkspace(workspaceId);
+
+    // Find all csharp_method nodes
+    const methodNodes = allNodes.filter((n) => n.type === 'csharp_method');
+
+    // Index class nodes by project for efficient lookup
+    const virtualClassesByProject = new Map<string, GraphNode[]>();
+    const classFragmentsByProject = new Map<string, GraphNode[]>();
+
+    for (const node of allNodes) {
+        if (node.type === 'virtual_class') {
+            const existing = virtualClassesByProject.get(node.project);
+            if (existing) {
+                existing.push(node);
+            } else {
+                virtualClassesByProject.set(node.project, [node]);
+            }
+        } else if (node.type === 'csharp_class') {
+            const existing = classFragmentsByProject.get(node.project);
+            if (existing) {
+                existing.push(node);
+            } else {
+                classFragmentsByProject.set(node.project, [node]);
+            }
+        }
+    }
+
+    for (const method of methodNodes) {
+        const containingClass = method.lang_meta?.containingClass as string | undefined;
+        if (!containingClass) continue;
+
+        const project = method.project;
+        const methodSourceFile = method.lang_meta?.sourceFile as string | undefined;
+
+        let classNode: GraphNode | undefined;
+
+        // Tier 1: virtual_class node for that class name in same project
+        const virtualClasses = virtualClassesByProject.get(project) ?? [];
+        classNode = virtualClasses.find((n) => n.label === containingClass);
+
+        // Tier 2: csharp_class fragment matching by source_file
+        if (!classNode && methodSourceFile) {
+            const fragments = classFragmentsByProject.get(project) ?? [];
+            classNode = fragments.find(
+                (n) => n.label === containingClass && n.source_file === methodSourceFile,
+            );
+        }
+
+        // Tier 3: Any csharp_class fragment with same label in same project
+        if (!classNode) {
+            const fragments = classFragmentsByProject.get(project) ?? [];
+            classNode = fragments.find((n) => n.label === containingClass);
+        }
+
+        // No match found — emit warning and skip
+        if (!classNode) {
+            warnings.push(
+                `CONTAINS_EDGE_UNRESOLVED: method ${method.symbol} references class ${containingClass} which has no matching node in project ${project}`,
+            );
+            continue;
+        }
+
+        // Create contains edge
+        const edgeId = `edge:${sid(classNode.id, method.id, 'contains')}`;
+
+        const edge: GraphEdge = {
+            id: edgeId,
+            stableKey: edgeId,
+            workspace: workspaceId,
+            from_id: classNode.id,
+            to_id: method.id,
+            type: 'contains',
+            graph_kind: 'derived',
+            confidence_band: 'INFERRED',
+            trust_level: 'DERIVED',
+            provenance: {
+                source: 'analysis',
+                artifact_source: 'cross-file-analysis',
+                producer_stage: 'buildDerivedGraph',
+                rule: 'contains-edge-materialization',
+                timestamp,
+            },
+            metadata: {
+                derivation_rule: 'contains-edge-materialization',
+            },
+            updated_at: timestamp,
+        };
+
+        edges.push(edge);
+    }
+
+    return { edges, warnings };
+}
+
+// ── Derived Graph Options ───────────────────────────────────────────────────
+
 export interface DerivedGraphOptions {
     /** Per-project ImportMap artifacts — used to create module-level `imports` edges. */
     importMaps?: ImportMapArtifact[];
@@ -250,6 +527,29 @@ export async function buildDerivedGraph(
             }
         }
     }
+
+    // ── Partial Class Support ─────────────────────────────────────────────────
+    // Step 1: Delete stale edges first (before nodes, to satisfy foreign key constraints)
+    db.deleteEdgesByType(workspaceId, 'is_partial_of');
+    // Scope contains edge deletion to only those produced by this feature
+    db.deleteEdgesByMetadataRule(workspaceId, 'contains', 'contains-edge-materialization');
+    // Now safe to delete virtual_class nodes (no edges reference them)
+    db.deleteNodesByType(workspaceId, 'virtual_class');
+
+    // Step 2: Merge partial class fragments into virtual_class nodes
+    const mergeResult = mergePartialClasses(workspaceId, db);
+    nodes.push(...mergeResult.nodes);
+    edges.push(...mergeResult.edges);
+
+    // Step 3: Materialize contains edges (after merge, so virtual_class nodes are available)
+    // First persist merge results so materializeContainsEdges can find virtual_class nodes in DB
+    db.transaction(() => {
+        mergeResult.nodes.forEach((n) => db.upsertNode(n));
+        mergeResult.edges.forEach((e) => db.upsertEdge(e));
+    });
+
+    const containsResult = materializeContainsEdges(workspaceId, db);
+    edges.push(...containsResult.edges);
 
     db.transaction(() => {
         nodes.forEach((n) => db.upsertNode(n));

@@ -1,0 +1,344 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2025-01-01T00:00:00Z",
+  "description": "Machine-readable migration map: Python reference (CodeGraph) → TypeScript (code-review-graph)",
+  "statusValues": ["done", "partial", "missing", "wont-port", "in-progress"],
+  "entries": [
+    {
+      "id": "guided-installer",
+      "description": "Guided installer — auto-detect MCP clients and write server config",
+      "pythonModule": "codegraph install",
+      "tsEquivalent": "src/installer/",
+      "status": "missing",
+      "story": "US-013"
+    },
+    {
+      "id": "client-detection",
+      "description": "Client config detection (Claude Desktop, Cursor, Windsurf, VS Code)",
+      "pythonModule": "codegraph install --detect",
+      "tsEquivalent": "src/installer/detector.ts",
+      "status": "missing",
+      "story": "US-013"
+    },
+    {
+      "id": "idempotent-config-writer",
+      "description": "Idempotent config writer with merge logic",
+      "pythonModule": "codegraph install (merge logic)",
+      "tsEquivalent": "src/installer/writer.ts",
+      "status": "missing",
+      "story": "US-013"
+    },
+    {
+      "id": "tool-filter-allow",
+      "description": "MCP tool filtering — allow-list",
+      "pythonModule": "--tools flag on codegraph serve",
+      "tsEquivalent": "src/mcp/tools/runtime.ts",
+      "status": "missing",
+      "story": "US-014"
+    },
+    {
+      "id": "tool-filter-deny",
+      "description": "MCP tool filtering — deny-list",
+      "pythonModule": "--exclude-tools flag on codegraph serve",
+      "tsEquivalent": "src/mcp/tools/runtime.ts",
+      "status": "missing",
+      "story": "US-014"
+    },
+    {
+      "id": "tool-filter-config",
+      "description": "Tool filter config (mcp.tools.allow / mcp.tools.deny)",
+      "pythonModule": "codegraph.yaml config",
+      "tsEquivalent": "knowledge.config.yaml",
+      "status": "missing",
+      "story": "US-014"
+    },
+    {
+      "id": "daemon-supervisor",
+      "description": "Multi-repo daemon supervisor process",
+      "pythonModule": "single-repo watcher (no daemon in Python)",
+      "tsEquivalent": "src/daemon/supervisor.ts",
+      "status": "missing",
+      "story": "US-015"
+    },
+    {
+      "id": "daemon-pidfile",
+      "description": "Daemon PID file management",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/daemon/pidfile.ts",
+      "status": "missing",
+      "story": "US-015"
+    },
+    {
+      "id": "daemon-crash-recovery",
+      "description": "Daemon crash recovery with exponential back-off",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/daemon/supervisor.ts",
+      "status": "missing",
+      "story": "US-015"
+    },
+    {
+      "id": "daemon-logging",
+      "description": "Daemon structured logging (JSONL)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/daemon/logger.ts",
+      "status": "missing",
+      "story": "US-015"
+    },
+    {
+      "id": "eval-runner",
+      "description": "Evaluation benchmarks (agent-eval)",
+      "pythonModule": "codegraph agent-eval skill",
+      "tsEquivalent": "src/eval/",
+      "status": "missing",
+      "story": "US-016"
+    },
+    {
+      "id": "eval-suite-loader",
+      "description": "Eval suite loader (YAML/JSON format)",
+      "pythonModule": "agent-eval fixtures",
+      "tsEquivalent": "src/eval/loader.ts",
+      "status": "missing",
+      "story": "US-016"
+    },
+    {
+      "id": "eval-predicates",
+      "description": "Eval predicate matching (notEmpty, minNodeCount, nodeLabels, nodeKinds)",
+      "pythonModule": "agent-eval assertions",
+      "tsEquivalent": "src/eval/scorer.ts",
+      "status": "missing",
+      "story": "US-016"
+    },
+    {
+      "id": "hybrid-search",
+      "description": "Hybrid FTS + vector embedding search",
+      "pythonModule": "codegraph_search with embeddings",
+      "tsEquivalent": "src/core/graph/search/",
+      "status": "missing",
+      "story": "US-017"
+    },
+    {
+      "id": "cosine-similarity",
+      "description": "Cosine similarity computation for embedding search",
+      "pythonModule": "embedding search in Python",
+      "tsEquivalent": "src/core/graph/search/EmbeddingIndex.ts",
+      "status": "missing",
+      "story": "US-017"
+    },
+    {
+      "id": "search-fusion",
+      "description": "Search result fusion (FTS + semantic scores)",
+      "pythonModule": "hybrid ranking in Python",
+      "tsEquivalent": "src/core/graph/search/SearchFusion.ts",
+      "status": "missing",
+      "story": "US-017"
+    },
+    {
+      "id": "semantic-weight-config",
+      "description": "Configurable semantic weight for search fusion",
+      "pythonModule": "search.semantic_weight config",
+      "tsEquivalent": "knowledge.config.yaml",
+      "status": "missing",
+      "story": "US-017"
+    },
+    {
+      "id": "html-viz-export",
+      "description": "Interactive HTML visualization (D3.js force-directed layout)",
+      "pythonModule": "N/A (no direct equivalent)",
+      "tsEquivalent": "src/export/html.ts",
+      "status": "missing",
+      "story": "US-018"
+    },
+    {
+      "id": "confidence-band-coloring",
+      "description": "Graph export with confidence band coloring",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/export/html.ts",
+      "status": "missing",
+      "story": "US-018"
+    },
+    {
+      "id": "node-metadata-panel",
+      "description": "Node metadata panel (click-to-inspect)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/export/assets/template.html",
+      "status": "missing",
+      "story": "US-018"
+    },
+    {
+      "id": "filter-toolbar",
+      "description": "Filter toolbar and search highlight in visualization",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/export/assets/template.html",
+      "status": "missing",
+      "story": "US-018"
+    },
+    {
+      "id": "java-adapter",
+      "description": "Java language adapter (Spring annotations)",
+      "pythonModule": "19+ language parsers (universal extraction)",
+      "tsEquivalent": "src/scanner/languages/java/",
+      "status": "missing",
+      "story": "US-019"
+    },
+    {
+      "id": "java-controller-extraction",
+      "description": "@RestController / @Controller extraction",
+      "pythonModule": "universal Java parser",
+      "tsEquivalent": "src/scanner/languages/java/JavaParser.ts",
+      "status": "missing",
+      "story": "US-019"
+    },
+    {
+      "id": "java-service-extraction",
+      "description": "@Service / @Repository extraction",
+      "pythonModule": "universal Java parser",
+      "tsEquivalent": "src/scanner/languages/java/JavaParser.ts",
+      "status": "missing",
+      "story": "US-019"
+    },
+    {
+      "id": "java-treesitter-wasm",
+      "description": "tree-sitter-java WASM grammar (no native compilation)",
+      "pythonModule": "native tree-sitter bindings",
+      "tsEquivalent": "WASM-based parser",
+      "status": "missing",
+      "story": "US-019"
+    },
+    {
+      "id": "community-splitting",
+      "description": "Community splitting (oversized → sub-communities)",
+      "pythonModule": "community detection (basic)",
+      "tsEquivalent": "src/core/graph/analysis/community.ts",
+      "status": "partial",
+      "story": "US-020"
+    },
+    {
+      "id": "edge-betweenness-partitioning",
+      "description": "Edge-betweenness centrality sub-partitioning",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/core/graph/analysis/community.ts",
+      "status": "missing",
+      "story": "US-020"
+    },
+    {
+      "id": "folder-fallback-grouping",
+      "description": "Folder-structure fallback grouping",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/core/graph/analysis/community.ts",
+      "status": "missing",
+      "story": "US-020"
+    },
+    {
+      "id": "flow-criticality-scoring",
+      "description": "Flow criticality scoring system",
+      "pythonModule": "N/A (no equivalent)",
+      "tsEquivalent": "src/core/graph/analysis/flows.ts",
+      "status": "partial",
+      "story": "US-021"
+    },
+    {
+      "id": "node-weight-matrix",
+      "description": "Node weight matrix (Controller=10, DB=8, External=8, Helper=2)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/core/graph/analysis/flows.ts",
+      "status": "missing",
+      "story": "US-021"
+    },
+    {
+      "id": "affected-flow-lookup",
+      "description": "Affected-flow lookup by changed files/symbols",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/core/graph/analysis/flows.ts",
+      "status": "missing",
+      "story": "US-021"
+    },
+    {
+      "id": "agent-prompts-mcp",
+      "description": "Agent workflow prompts via MCP Prompts API",
+      "pythonModule": "N/A (no equivalent)",
+      "tsEquivalent": "src/mcp/prompts/",
+      "status": "missing",
+      "story": "US-022"
+    },
+    {
+      "id": "prompt-template-loader",
+      "description": "Prompt template loader (YAML files)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/mcp/prompts/loader.ts",
+      "status": "missing",
+      "story": "US-022"
+    },
+    {
+      "id": "default-prompts",
+      "description": "Default prompts (review-pr, debug-flow, onboard-workspace)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/mcp/prompts/defaults/",
+      "status": "missing",
+      "story": "US-022"
+    },
+    {
+      "id": "memory-reingestion",
+      "description": "Memory/wiki re-ingestion loop",
+      "pythonModule": "N/A (no equivalent)",
+      "tsEquivalent": "src/pipeline/stages/00_reingest.ts",
+      "status": "missing",
+      "story": "US-023"
+    },
+    {
+      "id": "hmac-signature-verification",
+      "description": "HMAC signature verification for human annotations",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/pipeline/stages/00_reingest.ts",
+      "status": "missing",
+      "story": "US-023"
+    },
+    {
+      "id": "ast-drift-detection",
+      "description": "AST signature drift detection for annotations",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/pipeline/stages/00_reingest.ts",
+      "status": "missing",
+      "story": "US-023"
+    },
+    {
+      "id": "orphan-annotation-recovery",
+      "description": "Orphan annotation recovery (stale vault)",
+      "pythonModule": "N/A",
+      "tsEquivalent": "src/pipeline/stages/00_reingest.ts",
+      "status": "missing",
+      "story": "US-023"
+    },
+    {
+      "id": "python-packaging",
+      "description": "Python packaging (fastmcp, networkx, Pydantic)",
+      "pythonModule": "fastmcp, networkx, pydantic",
+      "tsEquivalent": "N/A",
+      "status": "wont-port",
+      "story": null
+    },
+    {
+      "id": "http-sse-transport",
+      "description": "HTTP/SSE MCP transport",
+      "pythonModule": "fastmcp SSE server",
+      "tsEquivalent": "N/A (stdio only)",
+      "status": "wont-port",
+      "story": null
+    },
+    {
+      "id": "raw-python-schema",
+      "description": "Raw Python schema (Pydantic models)",
+      "pythonModule": "Python-specific models",
+      "tsEquivalent": "N/A",
+      "status": "wont-port",
+      "story": null
+    },
+    {
+      "id": "adaptive-token-budgeting",
+      "description": "Adaptive token budgeting (codegraph_explore)",
+      "pythonModule": "codegraph_explore",
+      "tsEquivalent": "AgentContextBuilder (partial)",
+      "status": "partial",
+      "story": null
+    }
+  ]
+}

@@ -21,13 +21,18 @@ export class BlastRadiusPanel {
       retainContextWhenHidden: true,
       localResourceRoots: [extensionUri],
     });
-    BlastRadiusPanel.currentPanel = new BlastRadiusPanel(panel, service, targetFile);
+    BlastRadiusPanel.currentPanel = new BlastRadiusPanel(panel, service, targetFile, extensionUri);
   }
 
-  private constructor(private readonly panel: vscode.WebviewPanel, service: CrgMcpService, private targetFile: string) {
+  private constructor(
+    private readonly panel: vscode.WebviewPanel,
+    service: CrgMcpService,
+    private targetFile: string,
+    private readonly extensionUri: vscode.Uri
+  ) {
     this.blastRadiusService = new BlastRadiusService(service);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.panel.webview.html = renderBlastRadiusWebview(this.panel.webview);
+    this.panel.webview.html = renderBlastRadiusWebview(this.panel.webview, this.extensionUri);
     this.panel.webview.onDidReceiveMessage((message) => void this.handleMessage(message), null, this.disposables);
     void this.updateTarget(targetFile);
   }

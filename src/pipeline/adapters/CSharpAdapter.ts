@@ -2,7 +2,7 @@
 import path from 'node:path';
 import type { AdapterContext, CandidateRecord, EvidenceSpan, IProjectAdapter } from '../../core/types.js';
 import type { ParsedSymbol } from '../../scanner/core/ILanguageParser.js';
-import { CSharpParser } from '../../scanner/languages/csharp/CSharpParser.js';
+import { CSharpParser, type CSharpParserOptions } from '../../scanner/languages/csharp/CSharpParser.js';
 import { nodeTypeRegistry } from '../../core/nodeTypeRegistry.js';
 import { readFile } from 'node:fs/promises';
 import { createExtractionError, type AdapterExtractionError } from './IProjectAdapter.js';
@@ -24,24 +24,35 @@ function stableId(...parts: string[]): string {
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
  */
 export class CSharpAdapter implements IProjectAdapter {
-  private readonly parser = new CSharpParser();
+  private parser: CSharpParser | undefined;
 
   /** Collected extraction errors for the current extraction run */
   private extractionErrors: AdapterExtractionError[] = [];
+
+  private getParser(context: AdapterContext): CSharpParser {
+    if (!this.parser) {
+      const parserOptions: CSharpParserOptions = {
+        extractPartialMethods: context.options?.extractPartialMethods ?? false,
+      };
+      this.parser = new CSharpParser(parserOptions);
+    }
+    return this.parser;
+  }
 
   /** Returns errors from the last extraction run */
   getExtractionErrors(): AdapterExtractionError[] {
     return [...this.extractionErrors];
   }
 
-  async parse(paths: string[]): Promise<{ paths: string[]; files: Array<{ filePath: string; symbols: ParsedSymbol[] }> }> {
+  async parse(paths: string[], context: AdapterContext): Promise<{ paths: string[]; files: Array<{ filePath: string; symbols: ParsedSymbol[] }> }> {
     this.extractionErrors = [];
+    const parser = this.getParser(context);
     const files: Array<{ filePath: string; symbols: ParsedSymbol[] }> = [];
 
     for (const p of paths) {
       try {
         const source = await readFile(p, 'utf-8');
-        const parsed = await this.parser.parse(source, p);
+        const parsed = await parser.parse(source, p);
         files.push({ filePath: p, symbols: parsed.symbols });
       } catch (err) {
         // Structured error handling: emit EXTRACTION_FAILED and continue
@@ -103,7 +114,7 @@ export class CSharpAdapter implements IProjectAdapter {
   }
 
   private symbolToCandidate(symbol: ParsedSymbol, filePath: string, context: AdapterContext): CandidateRecord {
-    const nodeType = this.resolveNodeType(symbol);
+    const nodeType = this.resolveNodeType(symbol, context.options);
     const evidence: EvidenceSpan = {
       evidence_id: stableId(filePath, symbol.name, String(symbol.startLine)),
       source_file: filePath,
@@ -112,6 +123,46 @@ export class CSharpAdapter implements IProjectAdapter {
       excerpt: `${symbol.name} (${path.basename(filePath)})`,
       role: this.roleForType(nodeType, symbol),
     };
+
+    // Build lang_meta based on node type
+    let lang_meta: Record<string, unknown>;
+    if (nodeType === 'csharp_method') {
+      // For method nodes, populate CSharpMethodMeta fields
+      const rawParams = symbol.parameters
+        ? symbol.parameters.map((p) => [p.type, p.name].filter(Boolean).join(' ')).join(', ')
+        : undefined;
+      // Strip parentheses and trim whitespace (in case raw string has them)
+      const parameters = rawParams
+        ? rawParams.replace(/^\(/, '').replace(/\)$/, '').trim()
+        : undefined;
+
+      lang_meta = {
+        containingClass: symbol.containingClass,
+        returnType: symbol.returnType,
+        parameters,
+        sourceFile: filePath,
+        isPartialClass: true,
+        // Full provenance fields
+        extraction_method: 'ast' as const,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence: 0.95,
+        record_type: 'node' as const,
+      };
+    } else {
+      lang_meta = {
+        kind: symbol.kind,
+        namespace: symbol.namespace,
+        containingClass: symbol.containingClass,
+        semantic_role: this.inferSemanticRole(symbol),
+        // Full provenance fields
+        extraction_method: 'ast' as const,
+        adapter_id: ADAPTER_ID,
+        adapter_version: ADAPTER_VERSION,
+        confidence: 0.95,
+        record_type: 'node' as const,
+      };
+    }
 
     return {
       candidate_id: stableId(nodeType, filePath, symbol.qualifiedName || symbol.name),
@@ -130,28 +181,18 @@ export class CSharpAdapter implements IProjectAdapter {
       evidence: [evidence],
       extractor: 'csharp_tree_sitter',
       status: 'candidate',
-      lang_meta: {
-        kind: symbol.kind,
-        namespace: symbol.namespace,
-        containingClass: symbol.containingClass,
-        semantic_role: this.inferSemanticRole(symbol),
-        // Full provenance fields
-        extraction_method: 'ast' as const,
-        adapter_id: ADAPTER_ID,
-        adapter_version: ADAPTER_VERSION,
-        confidence: 0.95,
-        record_type: 'node' as const,
-      },
+      lang_meta,
     };
   }
 
-  private resolveNodeType(symbol: ParsedSymbol): string {
+  private resolveNodeType(symbol: ParsedSymbol, options?: { extractPartialMethods?: boolean }): string {
     if (symbol.annotations.some((a) => /Http(Get|Post|Put|Delete|Patch)/i.test(a))) return 'csharp_controller_action';
     if (symbol.name.match(/^Map(Get|Post|Put|Delete|Patch):/)) return 'csharp_minimal_api';
     if (symbol.kind === 'interface') return 'csharp_interface';
     const semanticRole = this.inferSemanticRole(symbol);
     if (semanticRole === 'usecase') return 'csharp_usecase';
     if (semanticRole === 'dto') return 'csharp_dto';
+    if (symbol.kind === 'method' && symbol.containingClass && options?.extractPartialMethods === true) return 'csharp_method';
     return 'csharp_class';
   }
 

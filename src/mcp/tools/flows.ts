@@ -4,6 +4,7 @@ import { resolveDbPath } from '../../pipeline/config.js';
 import { computeFlows, minimalContext, withDerivedDomains } from '../../core/flows.js';
 import { registerTool } from './runtime.js';
 import { detectCommunities } from '../../core/graph/analysis/community.js';
+import { getAffectedFlows as getAffectedFlowsAnalysis } from '../../core/graph/analysis/flows.js';
 import type { GraphEdge, GraphNode, QueryMode } from '../../core/types.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
 import { OperationResolver } from '../../core/graph/query/OperationResolver.js';
@@ -209,7 +210,7 @@ export function registerFlowTools(): void {
 
   registerTool({
     name: 'get_affected_flows',
-    description: 'Find business flows affected by a specific set of changed files, node IDs, or symbols.',
+    description: 'Find business flows affected by a specific set of changed files, node IDs, or symbols, ranked by criticality.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -217,6 +218,7 @@ export function registerFlowTools(): void {
         projectId: { type: 'string' },
         targets: { type: 'array', items: { type: 'string' } },
         changedFiles: { type: 'array', items: { type: 'string' } },
+        changedSymbols: { type: 'array', items: { type: 'string' } },
         mode: { type: 'string', enum: ['authoritative', 'mixed_safe', 'exploratory'] },
       },
       required: ['workspaceId'],
@@ -227,43 +229,67 @@ export function registerFlowTools(): void {
         projectId: z.string().optional(),
         targets: z.array(z.string()).optional(),
         changedFiles: z.array(z.string()).optional(),
+        changedSymbols: z.array(z.string()).optional(),
         mode: QueryModeSchema,
       }).parse(args);
-      const targets = [...(input.targets ?? []), ...(input.changedFiles ?? [])].filter((target) => target.length > 0);
+      const targets = [...(input.targets ?? []), ...(input.changedFiles ?? []), ...(input.changedSymbols ?? [])].filter((target) => target.length > 0);
       if (targets.length === 0) {
         return insufficientEvidence({ flows: [], matchedNodes: [], unmatchedInputs: [] }, ['no targets provided'], ['NO_TARGETS']);
       }
 
       const { nodes, edges } = await visibleGraph(input.workspaceId, 'mcp.flows.get_affected_flows', input.mode as QueryMode, input.projectId);
+
+      // In authoritative mode, use only canonical/derived edges for scoring
+      const scoringEdges = (input.mode as QueryMode) === 'authoritative'
+        ? edges.filter((edge) => edge.graph_kind === 'canonical' || edge.graph_kind === 'derived')
+        : edges;
+
       const matchedNodes = nodes.filter((node) => nodeMatchesTarget(node, targets));
       const matchedIds = new Set(matchedNodes.map((node) => node.id));
       const unmatchedInputs = targets.filter((target) => !matchedNodes.some((node) => nodeMatchesTarget(node, [target])));
-      const flows = computeFlows(nodes, edges)
+
+      // Use the analysis module's getAffectedFlows for criticality scoring
+      const allFlows = computeFlows(nodes, scoringEdges);
+      const affectedFlowResults = getAffectedFlowsAnalysis(targets, allFlows, nodes, scoringEdges);
+
+      // Also build the legacy flow format with matched node counts for backward compatibility
+      const flows = allFlows
         .map((flow) => {
           const memberIds = new Set(flow.nodeIds);
           const matchedNodeCount = [...matchedIds].filter((id) => memberIds.has(id)).length;
-          const flowEdges = edges.filter((edge) => memberIds.has(edge.from_id) || memberIds.has(edge.to_id));
+          const flowEdges = scoringEdges.filter((edge) => memberIds.has(edge.from_id) || memberIds.has(edge.to_id));
           const projects = [...new Set(nodes.filter((node) => memberIds.has(node.id)).map((node) => node.project))].sort();
+
+          // Find the criticality record from the analysis module
+          const critRecord = affectedFlowResults.find((r) => r.flowId === flow.id);
+
           return {
             ...flow,
             nodeCount: flow.nodeIds.length,
             edgeCount: flowEdges.length,
             matchedNodeCount,
             projects,
-            criticality: matchedNodeCount * 10 + Math.min(100, flow.nodeIds.length),
+            criticality: critRecord?.criticality ?? { flowId: flow.id, score: 0, rating: 'low' as const, externalEndpoints: [] },
           };
         })
         .filter((flow) => flow.matchedNodeCount > 0)
-        .sort((a, b) => b.criticality - a.criticality || b.nodeCount - a.nodeCount);
+        .sort((a, b) => {
+          // Sort by criticality rating first, then by score
+          const ratingOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+          const ratingDiff = ratingOrder[b.criticality.rating] - ratingOrder[a.criticality.rating];
+          if (ratingDiff !== 0) return ratingDiff;
+          return b.criticality.score - a.criticality.score;
+        });
 
       const status = matchedNodes.length > 0 ? 'OK' : 'INSUFFICIENT_EVIDENCE';
       const data = {
         flows,
+        affectedFlowResults,
         matchedNodes: matchedNodes.map(toPanelNode),
         unmatchedInputs,
       };
       return status === 'OK'
-        ? okResult(data, ['matched affected graph nodes'])
+        ? okResult(data, ['matched affected graph nodes with criticality scoring'])
         : insufficientEvidence(data, ['no graph nodes matched targets'], ['NO_MATCHING_NODES']);
     },
   });

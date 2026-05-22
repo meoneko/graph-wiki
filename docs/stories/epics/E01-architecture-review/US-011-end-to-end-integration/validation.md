@@ -30,4 +30,4 @@ node dist/cli/index.js review-architecture --workspace test-ws --json
 
 ## Acceptance Evidence
 
-Pending implementation.
+Implemented via `.kiro/specs/codebase-review/tasks.md` — all 46 tasks completed.

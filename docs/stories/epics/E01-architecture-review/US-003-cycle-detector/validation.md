@@ -30,4 +30,4 @@ npm run typecheck
 
 ## Acceptance Evidence
 
-Pending implementation.
+Implemented via `.kiro/specs/codebase-review/tasks.md` — all 46 tasks completed.

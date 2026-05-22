@@ -15,6 +15,10 @@ function sha1(input: string): string {
   return createHash('sha1').update(input).digest('hex');
 }
 
+export interface AdapterOptions {
+  extractPartialMethods?: boolean;
+}
+
 export interface ExtractOptions {
   incremental?: boolean;
   changedFiles?: string[];
@@ -93,7 +97,7 @@ export async function extractCandidates(workspace: WorkspaceConfig, config: Know
     const changedFiles = await getFilesToExtract(workspace, project, config, db, options);
     if (changedFiles.length === 0) continue;
 
-    const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path };
+    const context = { workspaceId: workspace.id, projectId: project.id, projectRoot: project.path, options: { extractPartialMethods: project.extract_partial_methods ?? false } };
     const { resolutions, unmatched } = globalAdapterRegistry.resolveAll(context, changedFiles);
     if (resolutions.length === 0) {
       rejects.push({

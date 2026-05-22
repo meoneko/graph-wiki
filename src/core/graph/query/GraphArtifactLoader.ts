@@ -1,4 +1,4 @@
-﻿import type { GraphEdge, GraphNode } from '../../types.js';
+import type { GraphEdge, GraphNode } from '../../types.js';
 import type { GraphMeta } from '../contracts.js';
 import { GraphDB } from '../../../storage/GraphDB.js';
 import { GraphValidator, type ValidationIssue } from '../validation/GraphValidator.js';
@@ -56,7 +56,7 @@ export class GraphArtifactLoader {
   private cache = new Map<string, { artifacts: LoadedGraphArtifacts; loadedAt: number }>();
   private CACHE_TTL = 1000 * 60 * 5;
 
-  constructor(private readonly db: GraphDB) { }
+  constructor(readonly db: GraphDB) { }
 
   async load(workspaceId: string): Promise<LoadedGraphArtifacts> {
     const cached = this.cache.get(workspaceId);

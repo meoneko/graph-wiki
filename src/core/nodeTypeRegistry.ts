@@ -60,6 +60,8 @@ nodeTypeRegistry
   .register({ id: 'csharp_dto', category: 'contract', isCanonical: true, isEntrypoint: false, languages: ['csharp'] })
   .register({ id: 'csharp_interface', category: 'contract', isCanonical: false, isEntrypoint: false, languages: ['csharp'] })
   .register({ id: 'csharp_class', category: 'domain', isCanonical: false, isEntrypoint: false, languages: ['csharp'] })
+  .register({ id: 'csharp_method', category: 'domain', isCanonical: true, isEntrypoint: false, defaultExecutionRole: 'structural_support', languages: ['csharp'] })
+  .register({ id: 'virtual_class', category: 'domain', isCanonical: false, isEntrypoint: false, languages: ['csharp'] })
   // Reserved for future CST-backed TypeScript route/API extraction.
   .register({ id: 'ts_route', category: 'entrypoint', isCanonical: true, isEntrypoint: true, languages: ['typescript', 'javascript'] })
   .register({ id: 'ts_api_endpoint', category: 'handler', isCanonical: true, isEntrypoint: false, languages: ['typescript', 'javascript'] })
@@ -86,4 +88,8 @@ nodeTypeRegistry
   .register({ id: 'graphql_query', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['graphql'] })
   .register({ id: 'graphql_mutation', category: 'contract', isCanonical: true, isEntrypoint: true, languages: ['graphql'] })
   .register({ id: 'doc_section', category: 'document', isCanonical: false, isEntrypoint: false, languages: ['markdown'] })
-  .register({ id: 'flow_domain', category: 'flow', isCanonical: false, isEntrypoint: false, defaultExecutionRole: 'informational', languages: ['*'] });
+  .register({ id: 'flow_domain', category: 'flow', isCanonical: false, isEntrypoint: false, defaultExecutionRole: 'informational', languages: ['*'] })
+  // Java (Spring) node types
+  .register({ id: 'java_controller', category: 'handler', isCanonical: true, isEntrypoint: true, defaultExecutionRole: 'executable', languages: ['java'] })
+  .register({ id: 'java_service', category: 'domain', isCanonical: true, isEntrypoint: false, defaultExecutionRole: 'structural_support', languages: ['java'] })
+  .register({ id: 'java_repository', category: 'domain', isCanonical: true, isEntrypoint: false, defaultExecutionRole: 'structural_support', languages: ['java'] });

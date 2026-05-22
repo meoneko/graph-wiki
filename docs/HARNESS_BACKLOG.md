@@ -35,5 +35,29 @@ proposed | accepted | implemented | rejected
 
 ## Items
 
-No backlog items yet.
+## Missing Harness Capability
+
+### Title
+
+VS Code Webview Service Worker Loading Failures
+
+### Discovered While
+
+Investigating a user environment error where the VS Code extension webview fails to load with `Could not register service worker: InvalidStateError`.
+
+### Current Pain
+
+When VS Code webview instances crash due to Chromium's internal service worker states or corrupt cache, agents and humans have no documented resolution path in the codebase or project harness.
+
+### Suggested Improvement
+
+Add a troubleshooting guide specifically for VS Code extension webview issues, explaining the causes (rapid reloads, corrupted cached data, background processes) and providing standard recovery commands.
+
+### Risk
+
+Tiny
+
+### Status
+
+implemented
 

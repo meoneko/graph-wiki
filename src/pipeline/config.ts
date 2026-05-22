@@ -23,6 +23,7 @@ export interface ProjectConfig {
   };
   rules?: ProjectRules;
   expectation?: 'optional' | 'required';
+  extract_partial_methods?: boolean;
 }
 
 export interface WorkspaceVerification {
@@ -173,12 +174,44 @@ export interface SchedulerConfig {
   };
 }
 
+// ─── MCP Config ──────────────────────────────────────────────────────────────
+
+/**
+ * MCP tool filtering configuration.
+ * - `allow`: if non-empty, only these tools are exposed (allowlist).
+ * - `deny`: tools to exclude (applied after allow filter).
+ * Empty arrays or omitted fields mean no filtering (all tools remain).
+ */
+export interface McpToolFilterConfig {
+  allow?: string[];
+  deny?: string[];
+}
+
+/**
+ * MCP server configuration block.
+ */
+export interface McpConfig {
+  tools?: McpToolFilterConfig;
+}
+
+// ─── Community Config ─────────────────────────────────────────────────────────
+
+/**
+ * Community detection configuration.
+ * - `max_size`: maximum number of nodes in a community before splitting (default: 50).
+ */
+export interface CommunityConfig {
+  max_size?: number;
+}
+
 export interface KnowledgeConfig {
   workspaces: WorkspaceConfig[];
   projects: ProjectConfig[];
   outputs: OutputConfig;
   ai?: AIConfig;
   scheduler?: SchedulerConfig;
+  mcp?: McpConfig;
+  community?: CommunityConfig;
 }
 
 interface RawKnowledgeConfig {
@@ -187,6 +220,8 @@ interface RawKnowledgeConfig {
   outputs?: Partial<OutputConfig>;
   ai?: AIConfig;
   scheduler?: SchedulerConfig;
+  mcp?: McpConfig;
+  community?: CommunityConfig;
 }
 
 const DEFAULT_OUTPUTS: OutputConfig = {
@@ -223,6 +258,8 @@ function mergeLocalConfig(base: KnowledgeConfig, local: RawKnowledgeConfig): Kno
     outputs: local.outputs ? { ...base.outputs, ...local.outputs } : base.outputs,
     ai: local.ai ? { ...base.ai, ...local.ai } : base.ai,
     scheduler: local.scheduler ?? base.scheduler,
+    mcp: local.mcp ?? base.mcp,
+    community: local.community ?? base.community,
   };
 }
 
@@ -294,6 +331,8 @@ export async function loadConfig(configPath = path.resolve(process.cwd(), 'knowl
     outputs: { ...DEFAULT_OUTPUTS, ...(parsed.outputs ?? {}) },
     ai: parsed.ai,
     scheduler: parsed.scheduler,
+    mcp: parsed.mcp,
+    community: parsed.community,
   };
 
   // Load local override (knowledge.config.local.yaml) — gitignored, never committed
@@ -306,6 +345,13 @@ export async function loadConfig(configPath = path.resolve(process.cwd(), 'knowl
   } catch {
     // No local override — use base as-is
     config = base;
+  }
+
+  // Validate project-level fields
+  for (const project of config.projects) {
+    if (project.extract_partial_methods !== undefined && typeof project.extract_partial_methods !== 'boolean') {
+      throw new Error(`extract_partial_methods must be a boolean (project: ${project.id})`);
+    }
   }
 
   // Resolve presets: compute effective config for workspaces that specify a preset

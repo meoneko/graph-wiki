@@ -58,6 +58,7 @@ export interface Provenance {
 export const EdgeType = {
   // Structural
   contains: 'contains',
+  is_partial_of: 'is_partial_of',
   imports: 'imports',
   inherits: 'inherits',
   implements: 'implements',
@@ -127,6 +128,9 @@ export interface AdapterContext {
   workspaceId: string;
   projectId: string;
   projectRoot: string;
+  options?: {
+    extractPartialMethods?: boolean;
+  };
 }
 
 export interface CandidateRecord {

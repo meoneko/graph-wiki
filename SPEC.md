@@ -1,7 +1,9 @@
 # SPEC.md — Trusted Code Intelligence Platform
 
-> Synthesized from codebase source files, type contracts, pipeline stages, and docs.
-> Last updated: 2026-05-16. Status: **Authoritative** (reflects current implementation).
+> Synthesized from TypeScript source files, type contracts, pipeline stages, docs,
+> and the Python reference implementation packed at
+> `.harness-backup/20260516162847/docs/code-review-graph.md`.
+> Last updated: 2026-05-18. Status: **Authoritative for the TypeScript target**.
 
 ---
 
@@ -29,6 +31,25 @@
 - Deployment orchestration
 - Distributed graph processing
 - Real-time collaboration
+
+### 1.3 Python Reference Migration Policy
+
+The packed Python implementation is accepted as a **reference implementation**
+for product capability discovery, not as a replacement architecture.
+
+Migration rules:
+
+- TypeScript remains the target runtime and source of implementation truth.
+- Python features may enrich this spec only when rewritten into TypeScript
+  concepts, contracts, validation expectations, and story candidates.
+- Reference benchmark numbers, language counts, and tool counts must not be
+  represented as implemented TypeScript behavior until TypeScript proof exists.
+- Python-specific implementation choices (`fastmcp`, `networkx`,
+  `code_review_graph/`, Python packaging, `crg-daemon`) are design inputs, not
+  direct contracts.
+- Shared product ideas such as tool filtering, installer onboarding, multi-repo
+  watch, evaluation benchmarks, visualization, hybrid search, and richer parser
+  coverage may become planned TypeScript migration work.
 
 ---
 
@@ -908,11 +929,26 @@ crg register <repoPath>
 crg serve-mcp                             # Start MCP server (stdio)
 ```
 
-### 10.2 --query-type values
+### 10.2 Planned Python-Reference CLI Enrichment
+
+These commands are not current TypeScript implementation claims. They are
+accepted migration targets derived from the Python reference implementation.
+
+| Capability | Python reference shape | TypeScript target shape | Status |
+|---|---|---|---|
+| Guided install | `code-review-graph install` writes MCP config and platform instructions | `crg install` detects supported clients and writes TypeScript-compatible MCP config/hooks | planned migration |
+| Tool filtering | `serve --tools` and `CRG_TOOLS` limit exposed MCP tools | `crg serve-mcp --tools <list>` plus `CRG_TOOLS` env override | planned migration |
+| Multi-repo daemon | `crg-daemon` / `code-review-graph daemon` supervises repo watchers | `crg daemon` uses Node child processes and a user-scoped registry/config | planned migration |
+| Visualization | `visualize` emits interactive HTML/SVG/GraphML/Cypher/Obsidian outputs | Extend existing `crg export` and add optional interactive HTML visualization | planned migration |
+| Evaluation | `eval` runs token, impact, flow, search, and build benchmarks | `crg eval` runs reproducible TypeScript benchmark fixtures | planned migration |
+| Incremental update | `update` rebuilds changed files only | Fold into `crg build --incremental` and optional `crg update` alias | partial/current via pipeline hashing |
+| Status | `status` reports graph health/stats | Add `crg status` as a read-only graph/database health command | planned migration |
+
+### 10.3 --query-type values
 
 `what-is-symbol` · `what-depends-on` · `what-route-calls` · `lineage` · `impact` · `why-canonical` · `why-insufficient-context`
 
-### 10.3 --mode values
+### 10.4 --mode values
 
 `authoritative` (default) · `mixed_safe` · `exploratory`
 
@@ -939,6 +975,20 @@ crg serve-mcp                             # Start MCP server (stdio)
 | **flows** | `list_flows`, `get_flow`, `get_affected_flows`, `get_minimal_context`, `get_lineage` |
 | **refactor** | `rename_preview`, `find_dead_code` |
 | **search** | `search` |
+
+### 11.3 Planned MCP Enrichment From Python Reference
+
+The TypeScript MCP server must preserve the existing Zod validation,
+`OperationResolver`, and `QueryResult` contracts. Python-reference features can
+be migrated only through that trust gate.
+
+| Capability | TypeScript contract |
+|---|---|
+| Tool filtering | Server startup may expose a subset of registered tools by CLI flag or env var. Hidden tools are not registered for that process. |
+| Minimal context tool | A compact task-oriented context tool may route agents to follow-up tools, but must build its answer from trust-aware graph queries. |
+| Postprocess tool | A tool may regenerate wiki, report, FTS, embedding, flow, or community artifacts without rebuilding canonical extraction. |
+| Prompt templates | Review, architecture, debug, onboard, and pre-merge prompts may be exposed as MCP prompts if the SDK supports them cleanly. |
+| Multi-client transport | HTTP/SSE or streamable HTTP is reference-only until a TypeScript story selects transport, security policy, and validation proof. |
 
 ---
 
@@ -1295,13 +1345,58 @@ cd packages/vscode-extension && npm run build
 | In-memory graph index | Fast queries; memory scales with graph size |
 | Traversal bounds | maxHops=6, maxPaths=50, maxQueue=5000 |
 | Exploratory cap | 2-hop limit in mixed_safe mode |
-| Tree-sitter languages | Only C# and TypeScript/TSX currently supported |
+| Tree-sitter languages | Only C# and TypeScript/TSX are current TypeScript implementation claims; Python-reference language coverage is roadmap input only |
 | Local-only | No distributed graph, no multi-machine |
 | AI non-determinism | Exploratory/enrichment quality depends on model |
 
 ---
 
-## 21. Glossary
+## 21. Python Reference Migration Backlog
+
+This backlog enriches the TypeScript product contract from the Python reference
+without changing current implementation status.
+
+### 21.1 Accepted Migration Candidates
+
+| Area | Reference capability | TypeScript migration target | Validation expectation |
+|---|---|---|---|
+| Installer onboarding | Detect AI coding clients and write MCP config, instructions, hooks, and skills | `crg install` supports Codex, Claude-compatible clients, Cursor-style hooks, Gemini/Qoder/Copilot-style config where applicable | Unit tests for config generation; fixture tests for idempotent merge; no destructive overwrite |
+| MCP tool filtering | Limit exposed tools with `--tools` or `CRG_TOOLS` | `serve-mcp` filters registration before server start | Unit tests for allow-list parsing and hidden tool absence |
+| Multi-repo watch | User-scoped daemon supervises one watcher per repo | `crg daemon` with user config, child process health checks, logs, and status | Integration tests with temp repos and simulated crashed child |
+| Benchmark suite | Token, impact, flow, search, and build benchmarks against sample repos | `crg eval` with reproducible fixtures and stable report schema | Snapshot or JSON-schema tests for reports; CI-safe small fixture run |
+| Hybrid search | FTS plus optional embeddings and fallback keyword search | Extend search service behind trust-aware visibility and workspace filters | Unit tests for ranking merge; integration tests for FTS and optional embedding disabled path |
+| Visualization | Interactive HTML, SVG, GraphML, Obsidian, Neo4j/Cypher | Keep existing exports and add interactive HTML graph as optional report/export | Golden-file or schema tests for exported graph payload |
+| Community analysis | Leiden when available, fallback grouping, oversized community split | Reuse existing community detection and add deterministic fallback/splitting rules | Unit tests for partition stability and fallback behavior |
+| Flow criticality | Entry-point flow tracing with weighted criticality and affected-flow lookup | Extend `computeFlows`/flow reports while preserving trust boundaries | Fixture tests for flow membership and affected flow detection |
+| Agent prompt/templates | Review/debug/onboarding/pre-merge workflow templates | MCP prompts or CLI-generated context bundles, depending on SDK support | Contract tests for prompt names, inputs, and trust warnings |
+| Memory/wiki loop | Persist useful Q&A/wiki summaries for re-ingestion | Reference-only until a story defines provenance, trust level, and retention rules | Requires ADR before implementation |
+
+### 21.2 Reference-Only For Now
+
+| Reference item | Reason |
+|---|---|
+| Python packaging and command names (`code-review-graph`, `crg-daemon`) | TypeScript target keeps `crg` and npm build/development model |
+| `fastmcp` server implementation | TypeScript server already uses `@modelcontextprotocol/sdk` and Zod |
+| `networkx` graph algorithms | TypeScript must use existing graph/query services or selected JS libraries |
+| Raw Python SQLite schema | TypeScript schema already carries trust, provenance, workspace, and graph kind contracts |
+| Published benchmark claims from the Python repo | They are evidence for prioritization, not proof for this TypeScript implementation |
+| 24-language support claim | Treat as adapter roadmap until TypeScript parsers and tests exist |
+
+### 21.3 Migration Principles
+
+1. Preserve fail-closed trust semantics before adding broader capability.
+2. Prefer thin adapters around existing `OperationResolver`,
+   `TrustAwareQueryEngine`, `ArtifactStore`, `ReportBuilder`, and
+   pipeline stages.
+3. Add language support one adapter at a time with fixtures and test matrix rows.
+4. Keep optional heavyweight features optional: embeddings, visualization,
+   daemon, and benchmarks must not be required for basic graph build.
+5. Any new persistent artifact must document workspace scoping, provenance, and
+   stale-data behavior.
+
+---
+
+## 22. Glossary
 
 | Term | Definition |
 |---|---|

@@ -13,3 +13,11 @@ Add a decision when:
 - A high-risk feature chooses one design over another.
 - The source-of-truth hierarchy changes.
 
+## Decision Directory
+
+- [0001-harness-first-development.md](0001-harness-first-development.md)
+- [0002-post-spec-product-lifecycle.md](0002-post-spec-product-lifecycle.md)
+- [0003-generic-spec-intake-harness.md](0003-generic-spec-intake-harness.md)
+- [0004-architecture-review-reuse-strategy.md](0004-architecture-review-reuse-strategy.md)
+- [0005-python-reference-migration-strategy.md](0005-python-reference-migration-strategy.md)
+- [0006-memory-wiki-re-ingestion-policy.md](0006-memory-wiki-re-ingestion-policy.md)

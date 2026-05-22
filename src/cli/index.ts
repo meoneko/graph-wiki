@@ -1,6 +1,8 @@
 ﻿import { config as dotenvConfig } from 'dotenv';
 dotenvConfig({ quiet: true });
 
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { runPipeline } from '../pipeline/run.js';
 import { PipelineStages } from '../pipeline/run.js';
 import { startWatch } from '../pipeline/watch.js';
@@ -14,6 +16,7 @@ import { registerRepo } from '../registry/index.js';
 import { exportGraphML } from '../export/graphml.js';
 import { exportObsidian } from '../export/obsidian.js';
 import { exportNeo4j } from '../export/neo4j.js';
+import { exportHtml } from '../export/html.js';
 import { OperationResolver } from '../core/graph/query/OperationResolver.js';
 import { StructuredAskEngine } from '../core/ask/StructuredAskEngine.js';
 import type { StructuredQueryType } from '../core/ask/StructuredAskEngine.js';
@@ -27,6 +30,7 @@ import { ArtifactStore } from '../pipeline/artifacts/graphArtifacts.js';
 import { ArchitectureReviewEngine } from '../core/graph/analysis/architecture/ArchitectureReviewEngine.js';
 import { ArchitectureReportWriter } from '../core/graph/analysis/architecture/ArchitectureReportWriter.js';
 import type { ArchitectureReport } from '../core/graph/analysis/architecture/types.js';
+import { installClients } from '../installer/index.js';
 import type { QueryMode } from '../core/types.js';
 import type { ImportMapArtifact } from '../pipeline/importMap.js';
 
@@ -41,7 +45,7 @@ function hasFlag(args: string[], flag: string): boolean {
 }
 
 function positionalArgs(args: string[]): string[] {
-  const valueFlags = new Set(['--workspace', '--diff', '--format', '--query-type', '--mode', '--max-nodes', '--max-edges', '--max-suggestions', '--type']);
+  const valueFlags = new Set(['--workspace', '--diff', '--format', '--query-type', '--mode', '--max-nodes', '--max-edges', '--max-suggestions', '--type', '--client', '--tools', '--exclude-tools', '--suite', '--threshold', '--weight']);
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -70,6 +74,16 @@ function help(): void {
   graph [--workspace <id>]
       Run sync through graph build stages (canonical, derived, exploratory, flows)
   watch [workspace]
+  install [--client <id>] [--yes] [--dry-run]
+      Auto-detect MCP clients and write server config
+      clients: claude-desktop, cursor, windsurf, vscode
+  daemon <start|stop|status|restart> [--foreground]
+      Manage the background daemon supervisor
+      start: fork a background supervisor process
+      stop: gracefully stop the daemon
+      status: report daemon status
+      restart: stop + start
+      --foreground: run supervisor in current terminal (blocking)
   ask <question> [--workspace <id>] [--query-type <type>] [--mode <mode>]
       query types: what-is-symbol, what-depends-on, what-route-calls, lineage, impact, why-canonical, why-insufficient-context
       modes: authoritative (default), mixed_safe, exploratory
@@ -83,12 +97,27 @@ function help(): void {
       Generate trust-aware wiki pages
   report [--workspace <id>] [--type <type>]
       Generate reports. Types: quality, verification, lint, digest, metrics, edge-health, ask-readiness, agent-context-readiness, all (default)
-  impact [--diff <base..head>] [--workspace <id>]
-  serve-mcp
+  impact [--diff <base..head>] [--workspace <id>] [--mode <mode>]
+      Analyze impact of changes with criticality ratings
+      modes: authoritative, mixed_safe (default), exploratory
+  eval [--workspace <id>] [--suite <path>] [--threshold <float>] [--json]
+      Run evaluation benchmark queries against the graph
+      --suite: path to eval suite file (JSON or YAML)
+      --threshold: pass threshold 0-1 (default 0.9)
+      --json: output full EvalReport JSON to stdout
+      Exit code 1 when score < threshold
+  serve-mcp [--tools <comma-list>] [--exclude-tools <comma-list>]
+      Start MCP server over stdio
+      --tools: expose only the listed tools (comma-separated)
+      --exclude-tools: expose all tools except the listed ones
+      Config: mcp.tools.allow / mcp.tools.deny in knowledge.config.yaml (CLI flags take precedence)
   stats [workspace]
-  search <query> [--workspace <id>]
+  search <query> [--workspace <id>] [--semantic] [--weight <float>]
+      Search graph nodes by label/symbol
+      --semantic: enable hybrid FTS + embedding search
+      --weight: semantic weight 0-1 (default 0.5, requires --semantic)
   register <repoPath>
-  export [--format graphml|obsidian|neo4j] [--workspace <id>]
+  export [--format graphml|obsidian|neo4j|html] [--workspace <id>]
   review-architecture [workspace] [--workspace <id>] [--mode <mode>] [--output <path>] [--json] [--fail-on-critical]
       Run architecture review analysis
       modes: authoritative (default), mixed_safe, exploratory`);
@@ -355,6 +384,53 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'install') {
+    const clientId = parseFlag(rest, '--client');
+    const autoAccept = hasFlag(rest, '--yes');
+    const dryRun = hasFlag(rest, '--dry-run');
+    await installClients({ clientId, autoAccept, dryRun });
+    return;
+  }
+
+  if (command === 'daemon') {
+    const { handleDaemonCommand } = await import('../daemon/cli.js');
+    const subcommand = rest[0]?.startsWith('--') ? undefined : rest[0];
+    const daemonArgs = rest.slice(subcommand ? 1 : 0);
+    await handleDaemonCommand(subcommand, daemonArgs);
+    return;
+  }
+
+  if (command === 'eval') {
+    const { runEval } = await import('../eval/index.js');
+
+    const ws = await resolveWorkspace(parseFlag(rest, '--workspace') ?? (positionalArgs(rest)[0]));
+    const suitePath = parseFlag(rest, '--suite') ?? 'knowledge/eval/suite.json';
+    const thresholdStr = parseFlag(rest, '--threshold');
+    const threshold = thresholdStr ? parseFloat(thresholdStr) : 0.9;
+    const json = hasFlag(rest, '--json');
+
+    if (isNaN(threshold) || threshold < 0 || threshold > 1) {
+      throw new Error(`Invalid --threshold: ${thresholdStr}. Must be a float between 0 and 1.`);
+    }
+
+    try {
+      const report = await runEval({ workspaceId: ws, suitePath, threshold, json });
+      if (!report.passed_overall) {
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorOutput = {
+        status: 'error',
+        codes: ['EVAL_FAILED'],
+        message: errorMessage,
+      };
+      console.log(JSON.stringify(errorOutput, null, 2));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (command === 'ask') {
     const question = positionalArgs(rest)[0];
     if (!question) throw new Error('ask requires <question>');
@@ -460,8 +536,38 @@ async function main(): Promise<void> {
     const [baseRaw, headRaw] = range.split('..');
     const base = baseRaw || 'HEAD~1';
     const head = headRaw || 'HEAD';
+    const modeFlag = parseFlag(rest, '--mode') as QueryMode | undefined;
+    const mode: QueryMode = modeFlag ?? 'mixed_safe';
     const diff = await getDiff(process.cwd(), base, head);
-    const report = await buildImpactReport(diff, ws);
+    const report = await buildImpactReport(diff, ws, mode);
+
+    // Enrich affectedFlows with criticality ratings using the analysis module
+    if (report.affectedFlows.length > 0 || diff.length > 0) {
+      const { computeFlows: computeFlowsFn } = await import('../core/flows.js');
+      const { getAffectedFlows: getAffectedFlowsFn } = await import('../core/graph/analysis/flows.js');
+      const service = getTrustedQueryService(getDB(resolveDbPath()));
+      const operation = OperationResolver.resolve({ caller: 'cli.impact' });
+      const visibleGraph = await service.engine(ws).getVisibleGraph(operation, mode);
+
+      // In authoritative mode, use only canonical/derived edges
+      const nodes = visibleGraph.nodes.filter((node) => node.graph_kind !== 'exploratory');
+      const edges = mode === 'authoritative'
+        ? visibleGraph.edges.filter((edge) => edge.graph_kind === 'canonical' || edge.graph_kind === 'derived')
+        : visibleGraph.edges.filter((edge) => edge.graph_kind !== 'exploratory');
+
+      const changedFiles = diff.map((d) => d.filePath);
+      const flows = computeFlowsFn(nodes, edges);
+      const affectedFlowResults = getAffectedFlowsFn(changedFiles, flows, nodes, edges);
+
+      // Replace the affectedFlows field with criticality-enriched results
+      report.affectedFlows = affectedFlowResults.map((result) => ({
+        id: result.flowId,
+        title: flows.find((f) => f.id === result.flowId)?.name ?? result.flowId,
+        criticality: result.criticality,
+        affectedReason: result.affectedReason,
+      }));
+    }
+
     // buildImpactReport already returns QueryResult shape
     console.log(JSON.stringify(report, null, 2));
     return;
@@ -723,7 +829,32 @@ async function main(): Promise<void> {
   }
 
   if (command === 'serve-mcp') {
-    await import('../mcp/server.js');
+    const { startMcpServer } = await import('../mcp/server.js');
+
+    // Parse CLI flags
+    const toolsFlag = parseFlag(rest, '--tools');
+    const excludeToolsFlag = parseFlag(rest, '--exclude-tools');
+
+    // Load config defaults
+    let configAllow: string[] | undefined;
+    let configDeny: string[] | undefined;
+    try {
+      const cfg = await loadConfig();
+      configAllow = cfg.mcp?.tools?.allow;
+      configDeny = cfg.mcp?.tools?.deny;
+    } catch {
+      // Config not available — proceed without defaults
+    }
+
+    // CLI flags take precedence over config
+    const allowTools = toolsFlag
+      ? toolsFlag.split(',').map((s) => s.trim()).filter(Boolean)
+      : configAllow?.length ? configAllow : undefined;
+    const denyTools = excludeToolsFlag
+      ? excludeToolsFlag.split(',').map((s) => s.trim()).filter(Boolean)
+      : configDeny?.length ? configDeny : undefined;
+
+    await startMcpServer({ allowTools, denyTools });
     return;
   }
 
@@ -752,8 +883,15 @@ async function main(): Promise<void> {
     if (modeFlag && !validModes.includes(mode)) {
       throw new Error(`Invalid --mode: ${modeFlag}. Valid values: ${validModes.join(', ')}`);
     }
+    const semantic = hasFlag(rest, '--semantic');
+    const weightStr = parseFlag(rest, '--weight');
+    const weight = weightStr ? parseFloat(weightStr) : undefined;
+    if (weight !== undefined && (isNaN(weight) || weight < 0 || weight > 1)) {
+      throw new Error(`Invalid --weight: ${weightStr}. Must be a float between 0 and 1.`);
+    }
     const operation = OperationResolver.resolve({ caller: 'cli.search' });
-    const result = await getTrustedQueryService(getDB(resolveDbPath())).engine(ws).searchNodes(query, operation, mode, 25);
+    const searchOptions = semantic ? { semantic: true, weight: weight ?? 0.5 } : undefined;
+    const result = await getTrustedQueryService(getDB(resolveDbPath())).engine(ws).searchNodes(query, operation, mode, 25, searchOptions);
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -822,6 +960,14 @@ async function main(): Promise<void> {
     if (format === 'graphml') exportData = exportGraphML(nodes, edges);
     else if (format === 'obsidian') exportData = JSON.stringify(exportObsidian(nodes, edges), null, 2);
     else if (format === 'neo4j') exportData = exportNeo4j(nodes, edges).join('\n');
+    else if (format === 'html') {
+      const html = exportHtml(nodes, edges, ws);
+      const outPath = join('knowledge', 'reports', ws, 'graph.html');
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, html);
+      console.log(outPath);
+      return;
+    }
     else throw new Error(`Unsupported format: ${format}`);
 
     // Wrap export output in QueryResult envelope for contract compliance

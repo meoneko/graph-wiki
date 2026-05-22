@@ -21,6 +21,20 @@ Parses your codebase into a SQLite knowledge graph, then exposes it via a CLI, a
 
 ---
 
+## Python Reference Migration
+
+This project is migrating mature capabilities from the [Python CodeGraph reference implementation](docs/migration/python-reference-map.md) into the TypeScript codebase. The migration preserves the existing trust model and infrastructure while adding new features.
+
+| Status | Stories | Description |
+|---|---|---|
+| `missing` | US-013, US-014, US-015, US-016, US-017, US-018, US-019, US-022, US-023 | Planned — not yet implemented |
+| `partial` | US-020, US-021 | Existing infrastructure to be extended |
+| `wont-port` | — | Python-specific details (not applicable) |
+
+**11 stories planned** across guided install, MCP tool filtering, multi-repo daemon, eval runner, hybrid search, interactive visualization, Java adapter, community splitting, flow criticality, agent prompts, and memory re-ingestion. See the full [migration map](docs/migration/python-reference-map.md) for per-capability status and the [machine-readable version](docs/migration/python-reference-map.json) for tooling integration.
+
+---
+
 ## Quick Start
 
 ```bash

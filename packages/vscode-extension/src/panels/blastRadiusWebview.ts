@@ -1,99 +1,90 @@
 import * as vscode from 'vscode';
 
-export function renderBlastRadiusWebview(webview: vscode.Webview): string {
+// Define gorgeous, high-fidelity custom SVGs
+const SVG_REFRESH = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
+const SVG_REBUILD = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`;
+const SVG_POSTPROCESS = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
+const SVG_SETTINGS = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+
+const SVG_ZOOM_IN = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`;
+const SVG_ZOOM_OUT = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`;
+const SVG_ZOOM_FIT = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+const SVG_GRAPH_MUTED = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--vscode-descriptionForeground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+
+export function renderBlastRadiusWebview(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = getNonce();
+  const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'blastRadius.css'));
+  const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'blastRadius.js'));
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
   <title>Blast Radius</title>
-  <style>
-    body { padding: 16px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-    button { margin: 0 8px 10px 0; padding: 6px 10px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; cursor: pointer; }
-    .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-    .banner { padding: 10px; margin-bottom: 14px; border-radius: 6px; background: var(--vscode-editorWidget-background); }
-    .error { color: var(--vscode-errorForeground); }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-    .card { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 12px; background: var(--vscode-editorWidget-background); }
-    .item { padding: 6px 0; border-top: 1px solid var(--vscode-panel-border); }
-    .item:first-child { border-top: 0; }
-    code { color: var(--vscode-textPreformat-foreground); }
-    pre { white-space: pre-wrap; overflow: auto; max-height: 360px; }
-  </style>
+  <link rel="stylesheet" href="${cssUri}">
 </head>
 <body>
-  <div>
-    <button id="refresh">Refresh</button>
-    <button id="rebuild" class="secondary">Rebuild Graph</button>
-    <button id="postprocess" class="secondary">Run Postprocess</button>
-    <button id="setup" class="secondary">Open Setup</button>
+  <!-- Header Action Bar -->
+  <div class="header-toolbar">
+    <div class="breadcrumb">Code Review Graph &rsaquo; Blast Radius</div>
+    <div class="actions">
+      <button id="refresh" title="Refresh file data">${SVG_REFRESH} Refresh</button>
+      <button id="rebuild" class="secondary" title="Rebuild and refresh database">${SVG_REBUILD} Rebuild Graph</button>
+      <button id="postprocess" class="secondary" title="Re-run wiki postprocess">${SVG_POSTPROCESS} Postprocess</button>
+      <button id="setup" class="secondary" title="Configure CRG">${SVG_SETTINGS} Setup</button>
+    </div>
   </div>
-  <div id="root" class="banner">Loading...</div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    let targetFile = '';
-    const root = document.getElementById('root');
 
-    document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ command: 'refreshBlastRadius', targetFile }));
-    document.getElementById('rebuild').addEventListener('click', () => vscode.postMessage({ command: 'rebuildGraph' }));
-    document.getElementById('postprocess').addEventListener('click', () => vscode.postMessage({ command: 'runPostprocess' }));
-    document.getElementById('setup').addEventListener('click', () => vscode.postMessage({ command: 'openSetup' }));
+  <div class="dashboard">
+    <!-- Left Panel: Sidebar (Nodes & Flows) -->
+    <aside class="sidebar">
+      <div class="panel-section">
+        <h3>Matched Nodes</h3>
+        <div class="search-box">
+          <input type="text" id="node-search" placeholder="Filter symbols..." />
+        </div>
+        <div id="matched-nodes-list" class="list-container"></div>
+      </div>
+      <div class="panel-section border-top">
+        <h3>Affected Flows</h3>
+        <div id="affected-flows-list" class="list-container"></div>
+      </div>
+    </aside>
 
-    window.addEventListener('message', event => {
-      const msg = event.data;
-      if (msg.command === 'setLoading') {
-        targetFile = msg.targetFile || targetFile;
-        root.innerHTML = '<div class="banner">' + escapeHtml(msg.message || 'Loading blast radius...') + '</div>';
-      }
-      if (msg.command === 'renderError') {
-        root.innerHTML = '<div class="banner error">' + escapeHtml(msg.message) + '</div>';
-      }
-      if (msg.command === 'renderBlastRadius') {
-        renderBlastRadius(msg.data || {});
-      }
-      if (msg.command === 'renderTrace') {
-        renderTrace(msg.data || {});
-      }
-    });
+    <!-- Right Panel: Canvas Visualizer -->
+    <main class="canvas-panel">
+      <!-- Floating Toolbar Controls -->
+      <div class="canvas-controls">
+        <button id="zoom-in" title="Zoom In">${SVG_ZOOM_IN}</button>
+        <button id="zoom-out" title="Zoom Out">${SVG_ZOOM_OUT}</button>
+        <button id="zoom-fit" title="Fit to View">${SVG_ZOOM_FIT}</button>
+      </div>
+      <!-- Large Pannable Drawing Board -->
+      <div id="canvas-viewport" class="viewport">
+        <div id="canvas-container" class="canvas-container">
+          <svg id="svg-layer"></svg>
+          <div id="html-layer"></div>
+        </div>
+      </div>
+      <!-- Center Empty State / Welcome Screen -->
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">${SVG_GRAPH_MUTED}</div>
+        <h2>Blast Radius Explorer</h2>
+        <p>Select a matched symbol from the list on the left to explore its dependency lineage.</p>
+      </div>
+      <!-- Canvas Loading Indicator State -->
+      <div id="canvas-loader" class="canvas-loader hidden">
+        <div class="spinner"></div>
+        <p>Loading dependency lineage...</p>
+      </div>
+      <!-- Selection Detail Card overlay -->
+      <div id="detail-overlay" class="detail-overlay hidden"></div>
+    </main>
+  </div>
 
-    function renderBlastRadius(data) {
-      targetFile = data.targetFile || targetFile;
-      const flows = Array.isArray(data.flows) ? data.flows : [];
-      const nodes = Array.isArray(data.matchedNodes) ? data.matchedNodes : [];
-      const warning = data.warning ? '<div class="banner error">' + escapeHtml(data.warning) + '</div>' : '';
-      root.innerHTML = warning +
-        '<h2>' + escapeHtml(data.targetFileName || targetFile || 'Blast radius') + '</h2>' +
-        '<p>Status: <code>' + escapeHtml(data.status || 'UNKNOWN') + '</code> | matched nodes: ' + nodes.length + ' | flows: ' + flows.length + '</p>' +
-        '<div class="grid"><section class="card"><h3>Matched Nodes</h3>' + renderNodes(nodes) + '</section>' +
-        '<section class="card"><h3>Affected Flows</h3>' + renderFlows(flows) + '</section></div>';
-    }
-
-    function renderNodes(nodes) {
-      if (!nodes.length) return '<p>No matched graph nodes.</p>';
-      return nodes.map(node => '<div class="item"><button class="secondary trace-button" data-node-id="' + escapeHtml(node.id || '') + '">Trace</button><strong>' +
-        escapeHtml(node.label || node.id) + '</strong><br><code>' + escapeHtml(node.type || '') + '</code><br>' +
-        escapeHtml(node.source_file || '') + '</div>').join('');
-    }
-
-    function renderFlows(flows) {
-      if (!flows.length) return '<p>No affected flows.</p>';
-      return flows.map(flow => '<div class="item"><strong>' + escapeHtml(flow.name || flow.id) + '</strong><br>criticality ' +
-        escapeHtml(flow.criticality || 0) + ' | nodes ' + escapeHtml(flow.nodeCount || flow.nodeIds?.length || 0) + '</div>').join('');
-    }
-
-    function renderTrace(data) {
-      root.innerHTML += '<section class="card" style="margin-top:12px"><h3>Lineage: ' + escapeHtml(data.nodeId) +
-        '</h3><pre>' + escapeHtml(JSON.stringify({ upstream: data.upstream, downstream: data.downstream, codes: data.factorCodes }, null, 2)) + '</pre></section>';
-    }
-
-    root.addEventListener('click', event => {
-      const button = event.target && event.target.closest ? event.target.closest('.trace-button') : undefined;
-      if (button && button.dataset.nodeId) vscode.postMessage({ command: 'traceNode', nodeId: button.dataset.nodeId });
-    });
-    function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
-  </script>
+  <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
 }
@@ -101,6 +92,8 @@ export function renderBlastRadiusWebview(webview: vscode.Webview): string {
 function getNonce(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let value = '';
-  for (let i = 0; i < 32; i++) value += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 32; i++) {
+    value += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
   return value;
 }

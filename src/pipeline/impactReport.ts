@@ -13,7 +13,17 @@ export interface ImpactReport extends QueryResult {
   riskScore: number;
   riskRationale: string[];
   criticalPaths: QueryResult[];
-  affectedFlows: Array<{ id: string; title: string }>;
+  affectedFlows: Array<{
+    id: string;
+    title: string;
+    criticality?: {
+      flowId: string;
+      score: number;
+      rating: 'low' | 'medium' | 'high' | 'critical';
+      externalEndpoints: string[];
+    };
+    affectedReason?: string;
+  }>;
   reviewSuggestions: string[];
 }
 

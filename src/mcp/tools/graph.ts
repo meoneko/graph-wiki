@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { getDB } from '../../storage/GraphDB.js';
-import { resolveDbPath } from '../../pipeline/config.js';
-import { detectCommunities, generateArchitectureOverview } from '../../core/graph/analysis/community.js';
+import { loadConfig, resolveDbPath } from '../../pipeline/config.js';
+import { detectCommunities, generateArchitectureOverview, splitOversizedCommunities } from '../../core/graph/analysis/community.js';
+import type { PartitionOptions } from '../../core/graph/analysis/community.js';
 import { registerTool } from './runtime.js';
 import { okResult, insufficientEvidence } from './results.js';
 import { getTrustedQueryService } from '../../core/graph/query/TrustedQueryService.js';
@@ -11,6 +12,23 @@ import { QueryResultFactory } from '../../core/graph/query/QueryResultFactory.js
 import type { GraphNode } from '../../core/types.js';
 
 const QueryModeSchema = z.enum(['authoritative', 'mixed_safe', 'exploratory']).default('mixed_safe');
+
+const DEFAULT_MAX_COMMUNITY_SIZE = 50;
+
+async function getPartitionOptions(): Promise<PartitionOptions> {
+  try {
+    const config = await loadConfig();
+    return {
+      maxCommunitySize: config.community?.max_size ?? DEFAULT_MAX_COMMUNITY_SIZE,
+      fallbackStrategy: 'folder_structure',
+    };
+  } catch {
+    return {
+      maxCommunitySize: DEFAULT_MAX_COMMUNITY_SIZE,
+      fallbackStrategy: 'folder_structure',
+    };
+  }
+}
 
 function filterProject(nodes: GraphNode[], projectId?: string): GraphNode[] {
   return projectId ? nodes.filter((node) => node.project === projectId) : nodes;
@@ -101,14 +119,17 @@ export function registerGraphTools(): void {
       const visibleNodes = filterProject(graph.nodes, input.projectId);
       const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
       const visibleEdges = graph.edges.filter((edge) => visibleNodeIds.has(edge.from_id) && visibleNodeIds.has(edge.to_id));
-      const communities = detectCommunities(visibleNodes, visibleEdges).map((community) => ({
-        id: encodeCommunityId(input.projectId, community.id),
-        name: community.label,
-        size: community.nodeIds.length,
-        cohesion: community.cohesion,
-        couplingWarnings: community.couplingWarnings,
+      const rawCommunities = detectCommunities(visibleNodes, visibleEdges);
+      const partitionOptions = await getPartitionOptions();
+      const splitCommunities = splitOversizedCommunities(rawCommunities, visibleNodes, visibleEdges, partitionOptions);
+      const communities = splitCommunities.map((sc) => ({
+        id: encodeCommunityId(input.projectId, sc.id),
+        name: sc.id,
+        size: sc.nodeIds.length,
+        cohesion: sc.cohesionScore,
+        parentCommunityId: sc.parentCommunityId ? encodeCommunityId(input.projectId, sc.parentCommunityId) : undefined,
       }));
-      return okResult({ communities }, ['communities grouped from visible graph']);
+      return okResult({ communities }, ['communities grouped from visible graph (with sub-community splitting)']);
     },
   });
 
@@ -137,7 +158,10 @@ export function registerGraphTools(): void {
       const visibleNodes = filterProject(graph.nodes, decoded.projectId);
       const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
       const visibleEdges = graph.edges.filter((edge) => visibleNodeIds.has(edge.from_id) && visibleNodeIds.has(edge.to_id));
-      const community = detectCommunities(visibleNodes, visibleEdges).find((entry) => entry.id === decoded.communityId);
+      const rawCommunities = detectCommunities(visibleNodes, visibleEdges);
+      const partitionOptions = await getPartitionOptions();
+      const splitCommunities = splitOversizedCommunities(rawCommunities, visibleNodes, visibleEdges, partitionOptions);
+      const community = splitCommunities.find((entry) => entry.id === decoded.communityId);
       const nodeIds = new Set(community?.nodeIds ?? []);
       const nodes = visibleNodes
         .filter((node) => nodeIds.has(node.id))
@@ -149,7 +173,7 @@ export function registerGraphTools(): void {
           source_file: node.source_file,
         }));
       return community
-        ? okResult({ nodes }, ['community nodes selected from visible graph'])
+        ? okResult({ nodes, parentCommunityId: community.parentCommunityId }, ['community nodes selected from visible graph'])
         : insufficientEvidence({ nodes: [] }, ['community not found'], ['COMMUNITY_NOT_FOUND']);
     },
   });

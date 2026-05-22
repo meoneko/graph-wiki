@@ -151,8 +151,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@vscode/webview-ui-toolkit": "^1.4.0",
-    "elkjs": "^0.9.3",
     "yaml": "^2.8.4"
   }
 }

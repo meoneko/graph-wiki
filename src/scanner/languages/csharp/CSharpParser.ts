@@ -7,11 +7,21 @@ function text(node: Node, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
 }
 
+export interface CSharpParserOptions {
+  extractPartialMethods?: boolean;
+}
+
 export class CSharpParser implements ILanguageParser {
   readonly backendId = 'csharp_tree_sitter';
   readonly language = 'csharp';
   readonly fileExtensions = ['.cs'];
   readonly isAuthoritative = true;
+
+  readonly options: CSharpParserOptions;
+
+  constructor(options?: CSharpParserOptions) {
+    this.options = options ?? {};
+  }
 
   private wrapperPromise: Promise<WebTreeSitterWrapper> | undefined;
 
@@ -254,6 +264,9 @@ export class CSharpParser implements ILanguageParser {
 
   private extractPartialClasses(root: Node, source: string): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
+    // Per-file overload disambiguation map (shared across all partial classes in the file)
+    const fileNameCounts = new Map<string, number>();
+
     for (const c of this.collectByType(root, 'class_declaration')) {
       const modifiers = this.collectByType(c, 'modifier').map((m) => text(m, source));
       if (!modifiers.includes('partial')) continue;
@@ -275,6 +288,67 @@ export class CSharpParser implements ILanguageParser {
         isPartial: true,
         containingClass,
         namespace,
+      });
+
+      // Extract methods from partial classes when the option is enabled
+      if (this.options.extractPartialMethods) {
+        out.push(...this.extractPartialClassMethods(c, name, namespace, source, fileNameCounts));
+      }
+    }
+    return out;
+  }
+
+  private extractPartialClassMethods(
+    classNode: Node,
+    className: string,
+    namespace: string | undefined,
+    source: string,
+    fileNameCounts: Map<string, number>,
+  ): ParsedSymbol[] {
+    const out: ParsedSymbol[] = [];
+
+    for (const method of this.collectByType(classNode, 'method_declaration')) {
+      const modifiers = this.collectByType(method, 'modifier').map((m) => text(m, source));
+      if (!modifiers.includes('public')) continue;
+
+      const nameNode = method.childForFieldName('name');
+      if (!nameNode) continue;
+      const methodName = text(nameNode, source);
+
+      // Overload disambiguation (per-file scope)
+      const disambiguationKey = `${className}.${methodName}`;
+      const count = (fileNameCounts.get(disambiguationKey) ?? 0) + 1;
+      fileNameCounts.set(disambiguationKey, count);
+      const suffix = count > 1 ? `_${count}` : '';
+      const qualifiedName = `${className}.${methodName}${suffix}`;
+
+      // Extract return type and parameters
+      const returnNode = method.childForFieldName('type');
+      const returnType = returnNode ? text(returnNode, source) : undefined;
+      const paramsNode = method.childForFieldName('parameters');
+      const parameters = paramsNode
+        ? paramsNode.namedChildren.map((p) => ({
+            name: p.childForFieldName('name') ? text(p.childForFieldName('name')!, source) : text(p, source),
+            type: p.childForFieldName('type') ? text(p.childForFieldName('type')!, source) : undefined,
+          }))
+        : undefined;
+
+      out.push({
+        name: methodName,
+        qualifiedName,
+        kind: 'method',
+        startLine: method.startPosition.row + 1,
+        endLine: method.endPosition.row + 1,
+        body: text(method, source),
+        calledSymbols: this.extractCalledSymbols(method, source),
+        annotations: this.getMethodAnnotations(method, source),
+        isPublic: true,
+        isStatic: modifiers.includes('static'),
+        isEntrypoint: false,
+        containingClass: className,
+        namespace,
+        returnType,
+        parameters,
       });
     }
     return out;

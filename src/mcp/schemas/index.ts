@@ -32,6 +32,7 @@ export const SearchNodesInput = z.object({
   query: z.string().min(1),
   workspaceId: z.string(),
   limit: z.number().int().min(1).max(100).optional().default(20),
+  semantic: z.boolean().optional().default(false),
 });
 
 export const ReviewDiffInput = z.object({

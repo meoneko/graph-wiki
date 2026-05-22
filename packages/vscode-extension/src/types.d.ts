@@ -1,4 +1,1 @@
-declare module 'elkjs/lib/elk.bundled.js' {
-  const ELK: any;
-  export default ELK;
-}
+// Unused types definitions cleaned up.
